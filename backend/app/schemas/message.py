@@ -14,6 +14,7 @@ class MessageResponse(BaseModel):
     id: str
     chat_id: str
     sender_id: str
+    sender_username: Optional[str] = None
     content: Optional[str] = None
     message_type: str
     file_url: Optional[str] = None

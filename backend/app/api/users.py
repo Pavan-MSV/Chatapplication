@@ -63,13 +63,33 @@ def search_users(
     # Query users matching query (excluding the current user and the AI Assistant)
     ai_user_id = "00000000-0000-0000-0000-000000000000"
     query_pattern = f"%{q}%"
-    users = db.query(User).filter(
+    # Fetch a pool of matching users (up to 100 matches to keep performance high)
+    users_pool = db.query(User).filter(
         and_(
             or_(User.username.ilike(query_pattern), User.email.ilike(query_pattern)),
             User.id != current_user.id,
             User.id != ai_user_id
         )
-    ).offset(offset).limit(limit).all()
+    ).limit(100).all()
+
+    # Sort matching users: exact match -> starts-with -> general partial match
+    def get_sort_key(u):
+        u_name = u.username.lower()
+        u_email = u.email.lower()
+        q_lower = q.lower()
+        
+        if u_name == q_lower:
+            return 0
+        if u_email == q_lower:
+            return 1
+        if u_name.startswith(q_lower):
+            return 2
+        if u_email.startswith(q_lower):
+            return 3
+        return 4
+
+    users_pool.sort(key=get_sort_key)
+    users = users_pool[offset : offset + limit]
 
     results = []
     for user in users:

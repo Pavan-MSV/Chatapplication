@@ -13,6 +13,7 @@ export const SocketProvider = ({ children }) => {
   
   const addMessage = useChatStore((s) => s.addMessage);
   const removeMessage = useChatStore((s) => s.removeMessage);
+  const markMessageDeleted = useChatStore((s) => s.markMessageDeleted);
   const setTyping = useChatStore((s) => s.setTyping);
   const setOnlineStatus = useChatStore((s) => s.setOnlineStatus);
   const fetchFriends = useChatStore((s) => s.fetchFriends);
@@ -56,7 +57,7 @@ export const SocketProvider = ({ children }) => {
             break;
             
           case "message_deleted":
-            removeMessage(data.message_id, data.chat_id);
+            markMessageDeleted(data.message_id, data.chat_id);
             break;
             
           case "typing_update":

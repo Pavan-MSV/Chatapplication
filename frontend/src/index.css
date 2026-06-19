@@ -1,6 +1,7 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   body {
@@ -53,4 +54,163 @@
   background: rgba(15, 23, 42, 0.6);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+}
+
+/* Auth Sliding Container Styles */
+.auth-wrapper {
+  background-color: #0f172a; /* Slate 900 */
+  position: relative;
+  overflow: hidden;
+  width: 850px;
+  max-width: 100%;
+  min-height: 580px;
+  border-radius: 24px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-family: 'Montserrat', 'Inter', sans-serif;
+}
+
+.auth-form-container {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  transition: all 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+.auth-sign-in {
+  left: 0;
+  width: 50%;
+  z-index: 2;
+}
+
+.auth-wrapper.active .auth-sign-in {
+  transform: translateX(100%);
+  opacity: 0;
+  z-index: 1;
+}
+
+.auth-sign-up {
+  left: 0;
+  width: 50%;
+  opacity: 0;
+  z-index: 1;
+}
+
+.auth-wrapper.active .auth-sign-up {
+  transform: translateX(100%);
+  opacity: 1;
+  z-index: 5;
+  animation: authFadeIn 0.6s;
+}
+
+@keyframes authFadeIn {
+  0%, 49.99% {
+    opacity: 0;
+    z-index: 1;
+  }
+  50%, 100% {
+    opacity: 1;
+    z-index: 5;
+  }
+}
+
+.auth-toggle-container {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 50%;
+  height: 100%;
+  overflow: hidden;
+  transition: all 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  z-index: 10;
+}
+
+.auth-wrapper.active .auth-toggle-container {
+  transform: translateX(-100%);
+}
+
+.auth-toggle {
+  height: 100%;
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); /* Premium brand green gradient */
+  color: #ffffff;
+  position: relative;
+  left: -100%;
+  width: 200%;
+  transform: translateX(0);
+  transition: all 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+.auth-wrapper.active .auth-toggle {
+  transform: translateX(50%);
+}
+
+.auth-toggle-panel {
+  position: absolute;
+  width: 50%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 0 40px;
+  text-align: center;
+  top: 0;
+  transition: all 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+.auth-toggle-left {
+  transform: translateX(-200%);
+}
+
+.auth-wrapper.active .auth-toggle-left {
+  transform: translateX(0);
+}
+
+.auth-toggle-right {
+  right: 0;
+  transform: translateX(0);
+}
+
+.auth-wrapper.active .auth-toggle-right {
+  transform: translateX(200%);
+}
+
+/* Mobile Responsiveness for Sliding Auth */
+@media (max-width: 768px) {
+  .auth-wrapper {
+    width: 100%;
+    min-height: auto;
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    box-shadow: none;
+    border: none;
+    background: transparent;
+  }
+  
+  .auth-form-container {
+    position: relative;
+    width: 100% !important;
+    height: auto;
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none;
+  }
+  
+  .auth-sign-in, .auth-sign-up {
+    display: none;
+  }
+  
+  .auth-wrapper:not(.active) .auth-sign-in {
+    display: block;
+  }
+  
+  .auth-wrapper.active .auth-sign-up {
+    display: block;
+    animation: none;
+  }
+
+  .auth-toggle-container {
+    display: none;
+  }
 }

@@ -7,7 +7,7 @@ import axios from "axios";
 import { 
   MessageSquare, Users, UserPlus, Bell, LogOut, Send, Paperclip, 
   Mic, Square, Play, Trash2, Moon, Sun, Search, X, Check, CheckCheck,
-  Settings, Sparkles, Languages, FileText, CheckCircle, Info, ChevronRight
+  Settings, Sparkles, Languages, FileText, CheckCircle, Info, ChevronRight, Camera
 } from "lucide-react";
 
 import { API_BASE } from "../config/api";
@@ -17,13 +17,17 @@ export default function Dashboard() {
   const { 
     chats, activeChatId, activeChat, messages, friends, pendingRequests, 
     typingMembers, onlineUsers, fetchChats, setActiveChatId, fetchFriends, 
-    fetchPendingRequests, setOnlineStatus 
+    fetchPendingRequests, setOnlineStatus, deleteMessageForMe
   } = useChatStore();
   const { notifications, unreadCount, fetchNotifications, markAllAsRead, markAsRead } = useNotificationStore();
   const { sendTypingStart, sendTypingStop, sendMarkSeen } = useSocket();
 
   // Dark Mode State
   const [darkMode, setDarkMode] = useState(true);
+
+  // Delete Modal State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [deleteTargetMsg, setDeleteTargetMsg] = useState(null);
 
   // Search, Profile, Group Modals State
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -62,6 +66,7 @@ export default function Dashboard() {
   // File upload state
   const [uploadingFile, setUploadingFile] = useState(false);
   const fileInputRef = useRef(null);
+  const profileFileInputRef = useRef(null);
 
   // Voice recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -95,6 +100,15 @@ export default function Dashboard() {
     }
   }, [darkMode]);
 
+  // Sync profile settings modal state with current user data on open
+  useEffect(() => {
+    if (isProfileOpen && user) {
+      setNewUsername(user.username || "");
+      setNewPhoto(user.profile_photo || "");
+      setNewStatus(user.status || "online");
+    }
+  }, [isProfileOpen, user]);
+
   // Scroll to bottom on new message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -124,6 +138,62 @@ export default function Dashboard() {
       
       setTypingTimeoutRef(timeout);
     }
+  };
+
+  // Handle secure file download (converts base64 data URLs to blobs to respect original filename/extension)
+  const handleDownloadFile = async (fileUrl, fileName) => {
+    if (!fileUrl) return;
+    try {
+      let blob;
+      if (fileUrl.startsWith("data:")) {
+        // Parse base64 data URL client-side to bypass browser fetch() scheme security constraints
+        const parts = fileUrl.split(",");
+        const mimeString = parts[0].split(":")[1].split(";")[0];
+        const byteString = atob(parts[1]);
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let i = 0; i < byteString.length; i++) {
+          ia[i] = byteString.charCodeAt(i);
+        }
+        blob = new Blob([ab], { type: mimeString });
+      } else {
+        const response = await fetch(fileUrl);
+        blob = await response.blob();
+      }
+
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      
+      // Delay cleanup to allow browser download manager to resolve the blob URL
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+      }, 1500);
+    } catch (err) {
+      console.error("Secure download failed, falling back to simple link open:", err);
+      window.open(fileUrl, "_blank");
+    }
+  };
+
+  // Handle local profile photo upload to base64
+  const handleProfilePhotoUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      alert("Image size must be less than 2MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onloadend = () => {
+      setNewPhoto(reader.result);
+    };
   };
 
   // Send text message
@@ -234,12 +304,29 @@ export default function Dashboard() {
     }
   };
 
-  // Delete message
-  const handleDeleteMessage = async (msgId) => {
+  // Delete message handlers
+  const initiateDeleteMessage = (msg) => {
+    setDeleteTargetMsg(msg);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleDeleteForMe = () => {
+    if (!deleteTargetMsg) return;
+    deleteMessageForMe(deleteTargetMsg.id, deleteTargetMsg.chat_id);
+    setIsDeleteModalOpen(false);
+    setDeleteTargetMsg(null);
+  };
+
+  const handleDeleteForEveryone = async () => {
+    if (!deleteTargetMsg) return;
     try {
-      await axios.delete(`${API_BASE}/messages/${msgId}`, { headers: getHeaders() });
+      await axios.delete(`${API_BASE}/messages/${deleteTargetMsg.id}`, { headers: getHeaders() });
+      useChatStore.getState().markMessageDeleted(deleteTargetMsg.id, deleteTargetMsg.chat_id);
     } catch (err) {
-      console.error("Delete message error:", err);
+      console.error("Delete for everyone error:", err);
+    } finally {
+      setIsDeleteModalOpen(false);
+      setDeleteTargetMsg(null);
     }
   };
 
@@ -403,23 +490,14 @@ export default function Dashboard() {
         
         {/* Sidebar Header */}
         <div className="p-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
-          <div className="flex items-center gap-3">
-            <img 
-              src={user?.profile_photo || `https://api.dicebear.com/7.x/adventurer/svg?seed=${user?.username}`} 
-              alt="Avatar"
-              className="w-10 h-10 rounded-full border border-slate-200 dark:border-slate-700 cursor-pointer hover:scale-105 transition-all"
-              onClick={() => setIsProfileOpen(true)}
-            />
-            <div>
-              <h4 className="font-semibold text-slate-800 dark:text-white leading-tight font-display">@{user?.username}</h4>
-              <span className="text-xs text-brand-500 font-medium flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse"></span>
-                Active
-              </span>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-gradient-to-tr from-brand-600 to-brand-500 rounded-xl flex items-center justify-center text-white shadow shadow-brand-500/20">
+              <MessageSquare className="w-4.5 h-4.5" />
             </div>
+            <span className="font-bold text-sm text-slate-800 dark:text-white font-display tracking-tight">ChatSphere AI</span>
           </div>
           
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             {/* Search icon */}
             <button 
               onClick={() => setIsSearchOpen(true)}
@@ -446,25 +524,8 @@ export default function Dashboard() {
             >
               <Bell className="w-4 h-4" />
               {unreadCount > 0 && (
-                <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white dark:border-slate-900 animate-pulse"></span>
+                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900 animate-pulse"></span>
               )}
-            </button>
-
-            {/* Theme Toggle */}
-            <button 
-              onClick={() => setDarkMode(!darkMode)}
-              className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
-            >
-              {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
-            </button>
-
-            {/* Log out */}
-            <button 
-              onClick={logout}
-              className="p-2 hover:bg-red-100 dark:hover:bg-red-950/30 rounded-lg text-red-500 transition-colors"
-              title="Log Out"
-            >
-              <LogOut className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -503,8 +564,8 @@ export default function Dashboard() {
                     />
                     {!chat.is_group && (
                       <span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${
-                        // We find the other user's presence state
-                        chat.members.find(m => m.user.id !== user?.id)?.user.status === "online" 
+                        // Dynamically look up the online state from the onlineUsers map
+                        (onlineUsers[chat.members.find(m => m.user.id !== user?.id)?.user.id] === "online")
                           ? "bg-brand-500" 
                           : "bg-slate-400"
                       }`}></span>
@@ -542,6 +603,43 @@ export default function Dashboard() {
             })
           )}
         </div>
+
+        {/* Sidebar Footer / User Profile */}
+        <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <img 
+              src={user?.profile_photo || `https://api.dicebear.com/7.x/adventurer/svg?seed=${user?.username}`} 
+              alt="Avatar"
+              className="w-9 h-9 rounded-full border border-slate-200 dark:border-slate-700 cursor-pointer hover:scale-105 transition-all shrink-0"
+              onClick={() => setIsProfileOpen(true)}
+            />
+            <div className="min-w-0">
+              <h4 className="font-semibold text-xs text-slate-800 dark:text-white truncate font-display">@{user?.username}</h4>
+              <span className="text-[10px] text-brand-500 font-medium flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse"></span>
+                Active
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-0.5">
+            {/* Theme Toggle */}
+            <button 
+              onClick={() => setDarkMode(!darkMode)}
+              className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
+              title="Toggle Theme"
+            >
+              {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
+            </button>
+            {/* Log out */}
+            <button 
+              onClick={logout}
+              className="p-1.5 hover:bg-red-100 dark:hover:bg-red-950/30 rounded-lg text-red-500 transition-colors"
+              title="Log Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* 2. MAIN CHAT AREA */}
@@ -560,7 +658,7 @@ export default function Dashboard() {
                   <h4 className="font-bold text-slate-800 dark:text-white leading-tight font-display">{activeChat.name}</h4>
                   <p className="text-xs text-slate-400 dark:text-slate-500 truncate max-w-md">
                     {activeChat.is_group ? activeChat.description : (
-                      activeChat.members.find(m => m.user.id !== user?.id)?.user.status === "online" 
+                      (onlineUsers[activeChat.members.find(m => m.user.id !== user?.id)?.user.id] === "online")
                         ? "Online" 
                         : "Offline"
                     )}
@@ -607,11 +705,11 @@ export default function Dashboard() {
                       {/* Message Bubble Card */}
                       <div className="flex items-center gap-2 max-w-lg">
                         
-                        {/* Right click/Hover delete icon for user's own messages */}
-                        {isMe && (
+                        {/* Hover delete icon for user's own messages on the left */}
+                        {isMe && msg.message_type !== "deleted" && (
                           <button
-                            onClick={() => handleDeleteMessage(msg.id)}
-                            className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-950/30 text-red-500 rounded-lg transition-all"
+                            onClick={() => initiateDeleteMessage(msg)}
+                            className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-950/30 text-red-500 rounded-lg transition-all cursor-pointer shrink-0"
                             title="Delete message"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -619,51 +717,62 @@ export default function Dashboard() {
                         )}
 
                         <div className={`p-4 rounded-2xl shadow-sm text-sm border relative ${
-                          isAI 
-                            ? "bg-gradient-to-tr from-indigo-900 to-indigo-950 text-indigo-50 border-indigo-850/60" 
-                            : (isMe 
-                                ? "bg-brand-500 text-white border-brand-450" 
-                                : "bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border-slate-200 dark:border-slate-800")
+                          msg.message_type === "deleted"
+                            ? "bg-slate-50/50 dark:bg-slate-900/30 text-slate-400 dark:text-slate-500 border-slate-100 dark:border-slate-900/60"
+                            : (isAI 
+                                ? "bg-gradient-to-tr from-indigo-900 to-indigo-950 text-indigo-50 border-indigo-850/60" 
+                                : (isMe 
+                                    ? "bg-brand-500 text-white border-brand-450" 
+                                    : "bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border-slate-200 dark:border-slate-800"))
                         }`}>
                           
-                          {/* File Attachment Bubble */}
-                          {msg.message_type === "image" && (
-                            <div className="mb-2 max-w-xs overflow-hidden rounded-lg border border-black/10">
-                              <img src={msg.file_url} alt="Shared" className="w-full h-auto object-cover max-h-60" />
+                          {/* Message Content rendering based on type */}
+                          {msg.message_type === "deleted" ? (
+                            <div className="flex items-center gap-2 text-slate-400 dark:text-slate-500 italic py-0.5">
+                              <Trash2 className="w-3.5 h-3.5 opacity-55 shrink-0" />
+                              <span>This message was deleted</span>
                             </div>
-                          )}
+                          ) : (
+                            <>
+                              {/* File Attachment Bubble */}
+                              {msg.message_type === "image" && (
+                                <div className="mb-2 max-w-xs overflow-hidden rounded-lg border border-black/10">
+                                  <img src={msg.file_url} alt="Shared" className="w-full h-auto object-cover max-h-60" />
+                                </div>
+                              )}
 
-                          {msg.message_type === "file" && (
-                            <a 
-                              href={msg.file_url} 
-                              download={msg.file_name} 
-                              className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 rounded-xl text-slate-700 dark:text-slate-200 mb-2 font-medium hover:underline hover:scale-[1.01] transition-all"
-                            >
-                              <FileText className="w-8 h-8 text-brand-500" />
-                              <div className="min-w-0 flex-1">
-                                <p className="text-xs font-semibold truncate leading-normal">{msg.file_name}</p>
-                                <p className="text-xxs text-slate-400 mt-0.5">{(msg.file_size / 1024).toFixed(1)} KB</p>
-                              </div>
-                            </a>
-                          )}
+                              {msg.message_type === "file" && (
+                                <button 
+                                  onClick={() => handleDownloadFile(msg.file_url, msg.file_name)}
+                                  className="w-full text-left flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 rounded-xl text-slate-700 dark:text-slate-200 mb-2 font-medium hover:underline hover:scale-[1.01] transition-all cursor-pointer"
+                                >
+                                  <FileText className="w-8 h-8 text-brand-500 shrink-0" />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-xs font-semibold truncate leading-normal">{msg.file_name}</p>
+                                    <p className="text-xxs text-slate-400 mt-0.5">{(msg.file_size / 1024).toFixed(1)} KB</p>
+                                  </div>
+                                </button>
+                              )}
 
-                          {/* Voice Message Bubble */}
-                          {msg.message_type === "voice" && (
-                            <div className="flex items-center gap-3 py-1 mb-2 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800/80">
-                              <Mic className="w-5 h-5 text-brand-500 shrink-0" />
-                              <audio src={msg.file_url} controls className="w-48 h-8 rounded-lg outline-none" />
-                            </div>
-                          )}
+                              {/* Voice Message Bubble */}
+                              {msg.message_type === "voice" && (
+                                <div className="flex items-center gap-3 py-1 mb-2 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800/80">
+                                  <Mic className="w-5 h-5 text-brand-500 shrink-0" />
+                                  <audio src={msg.file_url} controls className="w-48 h-8 rounded-lg outline-none" />
+                                </div>
+                              )}
 
-                          {/* Text Message Content */}
-                          {msg.content && (
-                            <p className="leading-relaxed break-words whitespace-pre-wrap">
-                              {translatedMessages[msg.id] || msg.content}
-                            </p>
+                              {/* Text Message Content */}
+                              {msg.content && (
+                                <p className="leading-relaxed break-words whitespace-pre-wrap">
+                                  {translatedMessages[msg.id] || msg.content}
+                                </p>
+                              )}
+                            </>
                           )}
 
                           {/* Render Translation note if overlay active */}
-                          {translatedMessages[msg.id] && (
+                          {translatedMessages[msg.id] && msg.message_type !== "deleted" && (
                             <div className="text-xxs mt-2 pt-1 border-t border-white/20 dark:border-slate-800 text-slate-300 dark:text-slate-400 italic">
                               Translated from original content.
                             </div>
@@ -717,6 +826,17 @@ export default function Dashboard() {
                               </button>
                             )}
                           </div>
+                        )}
+
+                        {/* Hover delete icon for other users' messages on the right */}
+                        {!isMe && msg.message_type !== "deleted" && (
+                          <button
+                            onClick={() => initiateDeleteMessage(msg)}
+                            className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-400 hover:text-red-500 rounded-lg transition-all cursor-pointer shrink-0"
+                            title="Delete message"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         )}
                       </div>
                     </div>
@@ -1012,33 +1132,52 @@ export default function Dashboard() {
 
             <form onSubmit={handleUpdateProfile} className="space-y-4">
               <div className="flex flex-col items-center py-2">
-                <img
-                  src={newPhoto || `https://api.dicebear.com/7.x/adventurer/svg?seed=${user?.username}`}
-                  alt="Avatar Preview"
-                  className="w-16 h-16 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm"
-                />
-              </div>
+                 <div 
+                   onClick={() => profileFileInputRef.current?.click()}
+                   className="relative group cursor-pointer w-20 h-20 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden hover:scale-102 hover:border-brand-500 transition-all flex items-center justify-center bg-slate-100 dark:bg-slate-950"
+                   title="Click to upload profile picture"
+                 >
+                   <img
+                     src={newPhoto || `https://api.dicebear.com/7.x/adventurer/svg?seed=${user?.username}`}
+                     alt="Avatar Preview"
+                     className="w-full h-full object-cover group-hover:opacity-75 transition-opacity"
+                   />
+                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white gap-1">
+                     <Camera className="w-5 h-5 text-white" />
+                     <span className="text-[9px] font-medium tracking-wide">Upload</span>
+                   </div>
+                 </div>
+                 <input 
+                   type="file"
+                   ref={profileFileInputRef}
+                   onChange={handleProfilePhotoUpload}
+                   className="hidden"
+                   accept="image/*"
+                 />
+                 <span className="text-[10px] text-slate-400 mt-2 font-medium">Click avatar to upload photo</span>
+               </div>
 
-              <div>
-                <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Username</label>
-                <input
-                  type="text"
-                  required
-                  className="w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl px-4 py-2 text-sm focus:outline-none"
-                  value={newUsername}
-                  onChange={(e) => setNewUsername(e.target.value)}
-                />
-              </div>
+               <div>
+                 <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Username</label>
+                 <input
+                   type="text"
+                   required
+                   className="w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl px-4 py-2 text-sm focus:outline-none"
+                   value={newUsername}
+                   onChange={(e) => setNewUsername(e.target.value)}
+                 />
+               </div>
 
-              <div>
-                <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Photo URL</label>
-                <input
-                  type="text"
-                  className="w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl px-4 py-2 text-sm focus:outline-none"
-                  value={newPhoto}
-                  onChange={(e) => setNewPhoto(e.target.value)}
-                />
-              </div>
+               <div>
+                 <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Photo URL (Optional)</label>
+                 <input
+                   type="text"
+                   className="w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl px-4 py-2 text-sm focus:outline-none"
+                   value={newPhoto}
+                   onChange={(e) => setNewPhoto(e.target.value)}
+                   placeholder="Or paste an image link"
+                 />
+               </div>
 
               <div>
                 <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Status Message</label>
@@ -1178,6 +1317,45 @@ export default function Dashboard() {
                 className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-all"
               >
                 Close Summary
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {isDeleteModalOpen && deleteTargetMsg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl relative mx-4 animate-scaleUp">
+            <h4 className="text-base font-bold text-slate-800 dark:text-white mb-2 font-display">
+              Delete Message?
+            </h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">
+              Are you sure you want to delete this message? This action cannot be undone.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleDeleteForMe}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 font-semibold text-xs rounded-xl transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
+              >
+                Delete for Me
+              </button>
+              {deleteTargetMsg.sender_id === user?.id && (
+                <button
+                  onClick={handleDeleteForEveryone}
+                  className="w-full py-2.5 bg-red-500 hover:bg-red-650 text-white font-semibold text-xs rounded-xl transition-all cursor-pointer"
+                >
+                  Delete for Everyone
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setIsDeleteModalOpen(false);
+                  setDeleteTargetMsg(null);
+                }}
+                className="w-full py-2.5 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-850 text-slate-400 dark:text-slate-500 font-semibold text-xs rounded-xl transition-all cursor-pointer mt-1"
+              >
+                Cancel
               </button>
             </div>
           </div>

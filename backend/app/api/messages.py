@@ -183,6 +183,15 @@ def get_message_history(
         Message.chat_id == chat_id
     ).order_by(Message.created_at.desc()).offset(offset).limit(limit).all()
 
+    # Pre-fetch sender usernames to avoid N+1 queries
+    sender_ids = list(set(msg.sender_id for msg in messages))
+    users = db.query(User).filter(User.id.in_(sender_ids)).all()
+    user_map = {user.id: user.username for user in users}
+    user_map["00000000-0000-0000-0000-000000000000"] = "AI Assistant"
+
+    for msg in messages:
+        msg.sender_username = user_map.get(msg.sender_id, "User")
+
     # Chat history should be rendered chronologically
     messages.reverse()
     return messages
@@ -210,7 +219,11 @@ async def delete_message(
         )
 
     chat_id = message.chat_id
-    db.delete(message)
+    message.message_type = "deleted"
+    message.content = "This message was deleted"
+    message.file_url = None
+    message.file_name = None
+    message.file_size = None
     db.commit()
 
     # Broadcast message deletion to other users in the chat room

@@ -2,8 +2,7 @@ import React from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { SocketProvider } from "./context/SocketContext";
-import Login from "./pages/Login";
-import Register from "./pages/Register";
+import AuthContainer from "./pages/AuthContainer";
 import Dashboard from "./pages/Dashboard";
 
 // Route Guard to verify user session
@@ -48,7 +47,7 @@ function AppContent() {
           path="/login"
           element={
             <PublicRoute>
-              <Login />
+              <AuthContainer />
             </PublicRoute>
           }
         />
@@ -56,7 +55,7 @@ function AppContent() {
           path="/register"
           element={
             <PublicRoute>
-              <Register />
+              <AuthContainer />
             </PublicRoute>
           }
         />
