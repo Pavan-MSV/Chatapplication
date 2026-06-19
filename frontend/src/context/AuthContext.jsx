@@ -3,8 +3,9 @@ import axios from "axios";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { auth as firebaseAuth, isConfigured as isFirebaseConfigured } from "../config/firebase";
 
+import { API_BASE } from "../config/api";
+
 const AuthContext = createContext(null);
-const API_BASE = "http://localhost:8000/api";
 
 export const useAuth = () => useContext(AuthContext);
 

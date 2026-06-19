@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useChatStore } from "../store/chatStore";
 import { useNotificationStore } from "../store/notificationStore";
+import { getWsUrl } from "../config/api";
 
 const SocketContext = createContext(null);
 
@@ -34,7 +35,7 @@ export const SocketProvider = ({ children }) => {
       socketRef.current.close();
     }
 
-    const wsUrl = `ws://localhost:8000/ws?token=${token}`;
+    const wsUrl = getWsUrl(token);
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
