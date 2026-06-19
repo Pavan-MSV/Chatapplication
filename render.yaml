@@ -1,0 +1,51 @@
+services:
+  # 1. Backend Web Service (FastAPI)
+  - type: web
+    name: chatsphere-backend
+    env: python
+    buildCommand: pip install -r backend/requirements.txt && pip install psycopg2-binary
+    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+        description: "The connection string to your Neon DB / PostgreSQL instance. Leave blank to use local SQLite."
+      - key: JWT_SECRET_KEY
+        generateValue: true
+        description: "A secure secret key used for signing JWT access tokens."
+      - key: GEMINI_API_KEY
+        sync: false
+        description: "Google Gemini API Key for smart suggestions, summarization, translation, and bot actions."
+      - key: DEV_BYPASS_FIREBASE
+        value: "True"
+        description: "Set to 'True' to bypass external Firebase authorization verify and use local DB credentials. Set to 'False' for production."
+      - key: FIREBASE_CREDENTIALS_PATH
+        value: ""
+        description: "Path to Firebase admin credentials JSON file (only needed if DEV_BYPASS_FIREBASE is False)."
+      - key: PYTHON_VERSION
+        value: "3.10.12"
+
+  # 2. Frontend Static Site (React + Vite)
+  - type: web
+    name: chatsphere-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    publishPath: dist
+    routes:
+      # Rewrite all routes to index.html for Single Page Application (SPA) routing
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_FIREBASE_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: VITE_FIREBASE_PROJECT_ID
+        sync: false
+      - key: VITE_FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: VITE_FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: VITE_FIREBASE_APP_ID
+        sync: false
