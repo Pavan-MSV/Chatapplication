@@ -48,21 +48,9 @@ export const AuthProvider = ({ children }) => {
   const loginWithEmail = async (email, password) => {
     setLoading(true);
     try {
-      if (isFirebaseConfigured && firebaseAuth) {
-        // 1. Authenticate with Firebase Client
-        const credentials = await signInWithEmailAndPassword(firebaseAuth, email, password);
-        const firebaseToken = await credentials.user.getIdToken();
-        
-        // 2. Exchange token for backend JWT session
-        const res = await axios.post(`${API_BASE}/auth/verify`, {
-          firebase_id_token: firebaseToken
-        });
-        handleAuthSuccess(res.data);
-      } else {
-        // Direct DB Login Bypass
-        const res = await axios.post(`${API_BASE}/auth/login`, { email, password });
-        handleAuthSuccess(res.data);
-      }
+      // Use Direct Backend API Login to support custom email OTP verification status
+      const res = await axios.post(`${API_BASE}/auth/login`, { email, password });
+      handleAuthSuccess(res.data);
       return { success: true };
     } catch (err) {
       console.error("Login failed:", err);
@@ -80,30 +68,17 @@ export const AuthProvider = ({ children }) => {
   const registerWithEmail = async (username, email, password) => {
     setLoading(true);
     try {
-      if (isFirebaseConfigured && firebaseAuth) {
-        // 1. Register with Firebase Client
-        const credentials = await createUserWithEmailAndPassword(firebaseAuth, email, password);
-        const firebaseToken = await credentials.user.getIdToken();
-        
-        // 2. Exchange and create backend profile
-        const res = await axios.post(`${API_BASE}/auth/verify`, {
-          firebase_id_token: firebaseToken
-        });
+      // Use Direct Backend API Register to generate and send custom OTP codes
+      const res = await axios.post(`${API_BASE}/auth/register`, {
+        username,
+        email,
+        password
+      });
+      if (res.data.access_token) {
         handleAuthSuccess(res.data);
         return { success: true };
       } else {
-        // Direct DB Register Bypass
-        const res = await axios.post(`${API_BASE}/auth/register`, {
-          username,
-          email,
-          password
-        });
-        if (res.data.access_token) {
-          handleAuthSuccess(res.data);
-          return { success: true };
-        } else {
-          return { requires_verification: true, email: email, message: res.data.message };
-        }
+        return { requires_verification: true, email: email, message: res.data.message };
       }
     } catch (err) {
       console.error("Registration failed:", err);

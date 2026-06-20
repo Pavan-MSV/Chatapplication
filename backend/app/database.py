@@ -30,6 +30,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     
     # Auto-migration: Check and add new columns to users table if they are missing
+    from sqlalchemy import text
     db = SessionLocal()
     try:
         for col_name, col_type in [
@@ -38,7 +39,7 @@ def init_db():
             ("otp_expires_at", "TIMESTAMP")
         ]:
             try:
-                db.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+                db.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
                 db.commit()
                 print(f"Migration: Added column {col_name} to users table.")
             except Exception:

@@ -24,7 +24,12 @@ app = FastAPI(title=settings.PROJECT_NAME, version="1.0.0")
 # Set up CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this to the frontend URL
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://chatapplication-0308.web.app",
+        "https://chatsphere-frontend-20wo.onrender.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
