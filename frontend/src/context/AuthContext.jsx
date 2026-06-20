@@ -59,6 +59,10 @@ export const AuthProvider = ({ children }) => {
       if (status === 403 || (detail && detail.includes("verified"))) {
         throw { requires_verification: true, email: email, message: detail };
       }
+      // Google account detected — suggest Google Sign-In
+      if (status === 400 && detail && detail.includes("Google Sign-In")) {
+        throw new Error(detail);
+      }
       throw new Error(detail || "Authentication failed.");
     } finally {
       setLoading(false);

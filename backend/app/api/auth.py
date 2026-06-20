@@ -197,10 +197,17 @@ def login_user(payload: UserLogin, db: Session = Depends(get_db)):
     Standard Email/Password Login. Rejects unverified accounts.
     """
     user = db.query(User).filter(User.email == payload.email).first()
-    if not user or not user.hashed_password:
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password."
+        )
+    
+    # Account registered via Google — no password stored
+    if not user.hashed_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This account uses Google Sign-In. Please click 'Sign in with Google' to continue."
         )
         
     if not verify_password(payload.password, user.hashed_password):
