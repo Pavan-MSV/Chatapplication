@@ -113,6 +113,8 @@ export const AuthProvider = ({ children }) => {
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
+      // Force the account selection dialog every time — prevents auto-signing into cached/guest accounts
+      provider.setCustomParameters({ prompt: 'select_account' });
       const credentials = await signInWithPopup(firebaseAuth, provider);
       const firebaseToken = await credentials.user.getIdToken();
       
