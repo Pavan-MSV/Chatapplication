@@ -7,7 +7,8 @@ import axios from "axios";
 import { 
   MessageSquare, Users, UserPlus, Bell, LogOut, Send, Paperclip, 
   Mic, Square, Play, Trash2, Moon, Sun, Search, X, Check, CheckCheck,
-  Settings, Sparkles, Languages, FileText, CheckCircle, Info, ChevronRight, Camera
+  Settings, Sparkles, Languages, FileText, CheckCircle, Info, ChevronRight, Camera,
+  ArrowLeft
 } from "lucide-react";
 
 import { API_BASE } from "../config/api";
@@ -486,7 +487,7 @@ export default function Dashboard() {
     <div className={`h-screen w-full flex overflow-hidden font-sans ${darkMode ? "dark bg-slate-950" : "bg-slate-50"}`}>
       
       {/* 1. SIDEBAR / CHATS PANEL */}
-      <div className="w-80 h-full flex flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+      <div className={`w-full md:w-80 h-full flex flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 ${activeChatId ? "hidden md:flex" : "flex"}`}>
         
         {/* Sidebar Header */}
         <div className="p-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
@@ -643,16 +644,23 @@ export default function Dashboard() {
       </div>
 
       {/* 2. MAIN CHAT AREA */}
-      <div className="flex-1 h-full flex flex-col bg-slate-100 dark:bg-slate-950">
+      <div className={`flex-1 h-full flex flex-col bg-slate-100 dark:bg-slate-950 ${activeChatId ? "flex" : "hidden md:flex"}`}>
         {activeChat ? (
           <>
             {/* Chat Room Header */}
-            <div className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 flex items-center justify-between shrink-0 shadow-sm z-10">
-              <div className="flex items-center gap-3">
+            <div className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 md:px-6 flex items-center justify-between shrink-0 shadow-sm z-10">
+              <div className="flex items-center gap-2 md:gap-3 min-w-0">
+                <button
+                  onClick={() => setActiveChatId(null)}
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 md:hidden transition-colors mr-0.5 shrink-0"
+                  title="Back to Chats"
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
                 <img
                   src={activeChat.icon_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${activeChat.name}`}
                   alt="Chat Icon"
-                  className="w-10 h-10 rounded-full"
+                  className="w-9 h-9 md:w-10 md:h-10 rounded-full shrink-0"
                 />
                 <div>
                   <h4 className="font-bold text-slate-800 dark:text-white leading-tight font-display">{activeChat.name}</h4>

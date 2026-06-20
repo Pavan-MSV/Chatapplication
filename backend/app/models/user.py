@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime
+from sqlalchemy import Column, String, DateTime, Boolean
 from backend.app.database import Base
 
 class User(Base):
@@ -15,3 +15,6 @@ class User(Base):
     status = Column(String, default="offline")  # online, offline, away
     last_seen = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    is_verified = Column(Boolean, default=True)  # verified by default for Firebase/Google users
+    otp_code = Column(String, nullable=True)
+    otp_expires_at = Column(DateTime(timezone=True), nullable=True)

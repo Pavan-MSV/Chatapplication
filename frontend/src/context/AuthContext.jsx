@@ -63,10 +63,15 @@ export const AuthProvider = ({ children }) => {
         const res = await axios.post(`${API_BASE}/auth/login`, { email, password });
         handleAuthSuccess(res.data);
       }
-      return true;
+      return { success: true };
     } catch (err) {
       console.error("Login failed:", err);
-      throw new Error(err.response?.data?.detail || "Authentication failed.");
+      const detail = err.response?.data?.detail;
+      const status = err.response?.status;
+      if (status === 403 || (detail && detail.includes("verified"))) {
+        throw { requires_verification: true, email: email, message: detail };
+      }
+      throw new Error(detail || "Authentication failed.");
     } finally {
       setLoading(false);
     }
@@ -85,6 +90,7 @@ export const AuthProvider = ({ children }) => {
           firebase_id_token: firebaseToken
         });
         handleAuthSuccess(res.data);
+        return { success: true };
       } else {
         // Direct DB Register Bypass
         const res = await axios.post(`${API_BASE}/auth/register`, {
@@ -92,9 +98,13 @@ export const AuthProvider = ({ children }) => {
           email,
           password
         });
-        handleAuthSuccess(res.data);
+        if (res.data.access_token) {
+          handleAuthSuccess(res.data);
+          return { success: true };
+        } else {
+          return { requires_verification: true, email: email, message: res.data.message };
+        }
       }
-      return true;
     } catch (err) {
       console.error("Registration failed:", err);
       throw new Error(err.response?.data?.detail || "Registration failed.");
@@ -140,6 +150,33 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const verifyOtp = async (email, otpCode) => {
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API_BASE}/auth/verify-otp`, {
+        email,
+        otp_code: otpCode
+      });
+      handleAuthSuccess(res.data);
+      return true;
+    } catch (err) {
+      console.error("OTP verification failed:", err);
+      throw new Error(err.response?.data?.detail || "Invalid or expired verification code.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resendOtp = async (email) => {
+    try {
+      const res = await axios.post(`${API_BASE}/auth/resend-otp`, { email });
+      return res.data.message || "Verification OTP code resent.";
+    } catch (err) {
+      console.error("OTP resend failed:", err);
+      throw new Error(err.response?.data?.detail || "Failed to resend verification code.");
+    }
+  };
+
   const logout = async () => {
     try {
       if (isFirebaseConfigured && firebaseAuth) {
@@ -160,6 +197,8 @@ export const AuthProvider = ({ children }) => {
         loginWithEmail,
         registerWithEmail,
         loginWithGoogle,
+        verifyOtp,
+        resendOtp,
         logout,
         setUser
       }}

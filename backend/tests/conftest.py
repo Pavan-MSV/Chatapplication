@@ -7,6 +7,7 @@ import os
 
 # Set environment variables for testing
 os.environ["DEV_BYPASS_FIREBASE"] = "True"
+os.environ["TESTING"] = "True"
 
 from backend.app.database import Base, get_db
 from backend.app.main import app

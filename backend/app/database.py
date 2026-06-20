@@ -29,6 +29,25 @@ def init_db():
     from backend.app.models import Base, User
     Base.metadata.create_all(bind=engine)
     
+    # Auto-migration: Check and add new columns to users table if they are missing
+    db = SessionLocal()
+    try:
+        for col_name, col_type in [
+            ("is_verified", "BOOLEAN DEFAULT TRUE"),
+            ("otp_code", "VARCHAR"),
+            ("otp_expires_at", "TIMESTAMP")
+        ]:
+            try:
+                db.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+                db.commit()
+                print(f"Migration: Added column {col_name} to users table.")
+            except Exception:
+                db.rollback()  # Silent rollback if column already exists
+    except Exception as e:
+        print(f"Migration error: {e}")
+    finally:
+        db.close()
+
     # Seed AI Assistant user
     db = SessionLocal()
     try:
