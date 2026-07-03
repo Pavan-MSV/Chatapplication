@@ -51,7 +51,7 @@ export default function AuthContainer() {
     setError("");
     try {
       await loginWithEmail(loginEmail, loginPassword);
-      navigate("/");
+      // AuthContext updates user state -> PublicRoute automatically redirects to "/"
     } catch (err) {
       if (err.requires_verification) {
         setOtpEmail(err.email);
@@ -82,8 +82,6 @@ export default function AuthContainer() {
         setOtpMessage(res.message || "A verification OTP code was sent to your email.");
         setOtpError("");
         setShowOtp(true);
-      } else {
-        navigate("/");
       }
     } catch (err) {
       setError(err.message || "Registration failed.");
@@ -94,7 +92,6 @@ export default function AuthContainer() {
     setError("");
     try {
       await loginWithGoogle();
-      navigate("/");
     } catch (err) {
       setError(err.message || "Google authentication failed.");
     }
@@ -106,13 +103,14 @@ export default function AuthContainer() {
     setOtpLoading(true);
     try {
       await verifyOtp(otpEmail, otpCode);
-      navigate("/");
     } catch (err) {
       setOtpError(err.message || "OTP verification failed.");
     } finally {
       setOtpLoading(false);
     }
   };
+
+
 
   const handleResendOtp = async () => {
     setOtpError("");

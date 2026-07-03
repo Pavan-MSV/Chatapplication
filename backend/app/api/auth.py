@@ -3,7 +3,9 @@ from sqlalchemy.orm import Session
 from datetime import timedelta, datetime, timezone
 import uuid
 import random
+import os
 from pydantic import BaseModel, EmailStr
+
 
 from backend.app.database import get_db
 from backend.app.models.user import User
@@ -81,18 +83,19 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
     user.otp_code = otp
     user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     
-    # Auto-verify in test environment to keep integration tests passing
+    # Auto-verify in test or dev bypass environment
     import os
-    if os.getenv("TESTING") == "True":
+    if os.getenv("TESTING") == "True" or (settings.DEV_BYPASS_FIREBASE and os.getenv("TESTING") != "False"):
         user.is_verified = True
         user.otp_code = None
         user.otp_expires_at = None
+
         
     db.commit()
     db.refresh(user)
 
     if user.is_verified:
-        # Generate access token directly for test bypass
+        # Generate access token directly for test/dev bypass
         access_token = create_access_token(
             subject=user.id,
             email=user.email
@@ -105,6 +108,7 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
             email=user.email,
             profile_photo=user.profile_photo
         )
+
 
     # Send email containing verification OTP code
     send_otp_email(user.email, otp)
@@ -217,10 +221,17 @@ def login_user(payload: UserLogin, db: Session = Depends(get_db)):
         )
 
     if not user.is_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Email not verified. Please verify your email first."
-        )
+        if settings.DEV_BYPASS_FIREBASE and os.getenv("TESTING") != "False":
+            user.is_verified = True
+            db.commit()
+            db.refresh(user)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Email not verified. Please verify your email first."
+            )
+
+
 
     # Generate access token
     access_token = create_access_token(
