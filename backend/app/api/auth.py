@@ -35,9 +35,12 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
     """
     Standard Email/Password Registration with OTP verification step.
     """
+    clean_email = payload.email.strip().lower()
+    clean_username = payload.username.strip()
+
     # Check if user already exists
     existing_user = db.query(User).filter(
-        (User.email == payload.email) | (User.username == payload.username)
+        (User.email.ilike(clean_email)) | (User.username.ilike(clean_username))
     ).first()
     
     if existing_user:
@@ -48,10 +51,10 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
             )
         else:
             # Reusing unverified user record
-            if existing_user.username != payload.username:
+            if existing_user.username.lower() != clean_username.lower():
                 # Make sure the new username isn't taken by a verified user
                 taken = db.query(User).filter(
-                    User.username == payload.username,
+                    User.username.ilike(clean_username),
                     User.is_verified == True
                 ).first()
                 if taken:
@@ -59,24 +62,26 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Username already taken."
                     )
-                existing_user.username = payload.username
+                existing_user.username = clean_username
             
+            existing_user.email = clean_email
             existing_user.hashed_password = get_password_hash(payload.password)
             user = existing_user
     else:
         # Hash the password
         hashed_pwd = get_password_hash(payload.password)
         
-        # Create new user (unverified)
+        # Create new user
         user = User(
-            username=payload.username,
-            email=payload.email,
+            username=clean_username,
+            email=clean_email,
             hashed_password=hashed_pwd,
-            profile_photo=payload.profile_photo or f"https://api.dicebear.com/7.x/adventurer/svg?seed={payload.username}",
+            profile_photo=payload.profile_photo or f"https://api.dicebear.com/7.x/adventurer/svg?seed={clean_username}",
             status="offline",
             is_verified=False
         )
         db.add(user)
+
 
     # Generate 6-digit OTP code
     otp = str(random.randint(100000, 999999))
@@ -198,14 +203,20 @@ def resend_otp(payload: ResendOTPPayload, db: Session = Depends(get_db)):
 @router.post("/login", response_model=Token)
 def login_user(payload: UserLogin, db: Session = Depends(get_db)):
     """
-    Standard Email/Password Login. Rejects unverified accounts.
+    Standard Email/Password Login. Supports login via Email or Username.
     """
-    user = db.query(User).filter(User.email == payload.email).first()
+    input_identifier = payload.email.strip()
+    # Search by email or username (case-insensitive)
+    user = db.query(User).filter(
+        (User.email.ilike(input_identifier)) | (User.username.ilike(input_identifier))
+    ).first()
+    
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password."
+            detail="Incorrect email/username or password."
         )
+
     
     # Account registered via Google — no password stored
     if not user.hashed_password:

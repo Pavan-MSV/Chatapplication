@@ -44,6 +44,9 @@ export default function Dashboard() {
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isMediaGalleryOpen, setIsMediaGalleryOpen] = useState(false);
 
+  // Sidebar Filter Input State
+  const [sidebarFilter, setSidebarFilter] = useState("");
+
   // Poll Modal State
   const [isPollModalOpen, setIsPollModalOpen] = useState(false);
   const [pollQuestion, setPollQuestion] = useState("");
@@ -79,7 +82,7 @@ export default function Dashboard() {
   const [chatSummary, setChatSummary] = useState("");
   const [loadingSummary, setLoadingSummary] = useState(false);
 
-  // Audio Playback Speed (msgId -> speed multiplier)
+  // Audio Playback Speed
   const [audioSpeed, setAudioSpeed] = useState({});
 
   // WebRTC Call Controls State
@@ -110,7 +113,6 @@ export default function Dashboard() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-  // Sync state on mount
   useEffect(() => {
     fetchChats();
     fetchFriends();
@@ -118,7 +120,6 @@ export default function Dashboard() {
     fetchNotifications();
   }, []);
 
-  // Set dark mode body class
   useEffect(() => {
     if (darkMode) {
       document.body.classList.add("dark");
@@ -135,7 +136,6 @@ export default function Dashboard() {
     }
   }, [isProfileOpen, user]);
 
-  // Scroll to bottom on new message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     if (activeChatId && messages.length > 0) {
@@ -299,11 +299,12 @@ export default function Dashboard() {
     }
   };
 
-  const handleSearchUsers = async (e) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
+  // Execute User Search (Username or Email)
+  const executeSearch = async (queryText) => {
+    const text = queryText || searchQuery;
+    if (!text || !text.trim()) return;
     try {
-      const res = await axios.get(`${API_BASE}/users/search?q=${searchQuery}&page=${searchPage}`, {
+      const res = await axios.get(`${API_BASE}/users/search?q=${encodeURIComponent(text.trim())}&page=1`, {
         headers: getHeaders()
       });
       setSearchResults(res.data);
@@ -313,11 +314,15 @@ export default function Dashboard() {
     }
   };
 
+  const handleSearchUsersSubmit = async (e) => {
+    if (e) e.preventDefault();
+    executeSearch(searchQuery);
+  };
+
   const handleSendRequest = async (username) => {
     try {
       await axios.post(`${API_BASE}/friends/request`, { receiver_username_or_email: username }, { headers: getHeaders() });
-      const res = await axios.get(`${API_BASE}/users/search?q=${searchQuery}&page=${searchPage}`, { headers: getHeaders() });
-      setSearchResults(res.data);
+      executeSearch(searchQuery);
     } catch (err) {
       console.error("Error sending request:", err);
     }
@@ -330,6 +335,7 @@ export default function Dashboard() {
       fetchFriends();
       fetchChats();
       fetchNotifications();
+      if (searchQuery) executeSearch(searchQuery);
     } catch (err) {
       console.error("Friend response error:", err);
     }
@@ -490,7 +496,6 @@ export default function Dashboard() {
     }
   };
 
-  // WebRTC Call Triggers
   const startCall = (callType = "video") => {
     if (!activeChat) return;
     const targetMember = activeChat.members.find(m => m.user.id !== user?.id);
@@ -527,16 +532,26 @@ export default function Dashboard() {
     });
   };
 
+  // Filtered Chats based on sidebar search input
+  const filteredChats = chats.filter((c) => {
+    if (!sidebarFilter.trim()) return true;
+    const term = sidebarFilter.trim().toLowerCase();
+    return (
+      (c.name && c.name.toLowerCase().includes(term)) ||
+      (c.last_message_content && c.last_message_content.toLowerCase().includes(term))
+    );
+  });
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-slate-900 font-sans text-slate-100 antialiased">
       
-      {/* 1. LEFT SIDEBAR PANEL */}
-      <div className={`w-full md:w-80 lg:w-96 flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 ${activeChatId ? "hidden md:flex" : "flex"}`}>
+      {/* 1. LEFT SIDEBAR PANEL (EXPANDED WIDTH FOR BETTER SPACING & VISIBILITY) */}
+      <div className={`w-full md:w-[380px] lg:w-[420px] xl:w-[460px] flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 ${activeChatId ? "hidden md:flex" : "flex"}`}>
         
         {/* Sidebar Header */}
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center text-white font-bold shadow-md shadow-brand-500/20 font-display">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center text-white font-bold text-lg shadow-md shadow-brand-500/20 font-display">
               CS
             </div>
             <div>
@@ -545,18 +560,18 @@ export default function Dashboard() {
             </div>
           </div>
           
-          <div className="flex items-center gap-0.5">
+          <div className="flex items-center gap-1">
             <button 
               onClick={() => setIsSearchOpen(true)}
-              className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
-              title="Search Users"
+              className="p-2.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl text-slate-500 dark:text-slate-400 transition-colors"
+              title="Find Connections by Username or Email"
             >
-              <Search className="w-4 h-4" />
+              <Search className="w-4 h-4 text-brand-500" />
             </button>
             
             <button 
               onClick={() => setIsGroupOpen(true)}
-              className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
+              className="p-2.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl text-slate-500 dark:text-slate-400 transition-colors"
               title="Create Group Chat"
             >
               <Users className="w-4 h-4" />
@@ -564,29 +579,61 @@ export default function Dashboard() {
 
             <button 
               onClick={() => setIsNotificationsOpen(true)}
-              className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 relative transition-colors"
+              className="p-2.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl text-slate-500 dark:text-slate-400 relative transition-colors"
               title="Alerts"
             >
               <Bell className="w-4 h-4" />
               {unreadCount > 0 && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900 animate-pulse"></span>
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900 animate-pulse"></span>
               )}
             </button>
           </div>
         </div>
 
+        {/* Sidebar Inline Search Bar */}
+        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-950/40">
+          <div className="relative flex items-center">
+            <Search className="w-4 h-4 absolute left-3 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={sidebarFilter}
+              onChange={(e) => setSidebarFilter(e.target.value)}
+              placeholder="Filter chats or search users..."
+              className="w-full bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200 pl-9 pr-8 py-2 rounded-xl text-xs outline-none focus:ring-1 focus:ring-brand-500 border border-slate-200 dark:border-slate-800 transition-all font-medium"
+            />
+            {sidebarFilter && (
+              <button 
+                onClick={() => setSidebarFilter("")}
+                className="absolute right-2.5 text-slate-400 hover:text-slate-200"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Chats List */}
         <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60 p-2 space-y-1">
-          <div className="px-2 py-1.5 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Conversations</div>
+          <div className="px-3 py-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center justify-between">
+            <span>Conversations</span>
+            <span className="text-xxs font-semibold bg-slate-200 dark:bg-slate-800 px-2 py-0.5 rounded-full text-slate-500">{filteredChats.length}</span>
+          </div>
           
-          {chats.length === 0 ? (
+          {filteredChats.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-8 text-center text-slate-400 dark:text-slate-500">
               <MessageSquare className="w-10 h-10 mb-2 opacity-30 text-brand-500" />
-              <p className="text-sm font-medium">No active chats</p>
-              <p className="text-xs mt-1">Search for friends and start chat requests to enable messaging.</p>
+              <p className="text-sm font-medium">No conversations found</p>
+              <p className="text-xs mt-1">Click the search icon above to find users by username or email.</p>
+              <button
+                onClick={() => setIsSearchOpen(true)}
+                className="mt-3 px-4 py-2 bg-brand-500/10 text-brand-500 hover:bg-brand-500 hover:text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Search Users</span>
+              </button>
             </div>
           ) : (
-            chats.map((chat) => {
+            filteredChats.map((chat) => {
               const isActive = chat.id === activeChatId;
               const isTyping = typingMembers[chat.id] && Object.keys(typingMembers[chat.id]).length > 0;
               
@@ -594,20 +641,20 @@ export default function Dashboard() {
                 <div
                   key={chat.id}
                   onClick={() => setActiveChatId(chat.id)}
-                  className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all hover:scale-[1.01] ${
+                  className={`flex items-center gap-3.5 p-3 rounded-2xl cursor-pointer transition-all hover:scale-[1.01] ${
                     isActive 
                       ? "bg-brand-500/10 text-brand-600 dark:text-brand-400 border-l-4 border-brand-500" 
                       : "hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-200"
                   }`}
                 >
-                  <div className="relative">
+                  <div className="relative shrink-0">
                     <img
                       src={chat.icon_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${chat.name}`}
                       alt="Chat Icon"
-                      className="w-11 h-11 rounded-full border border-slate-200 dark:border-slate-750"
+                      className="w-12 h-12 rounded-full border border-slate-200 dark:border-slate-750 object-cover"
                     />
                     {!chat.is_group && (
-                      <span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${
+                      <span className={`absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-white dark:border-slate-900 ${
                         (onlineUsers[chat.members.find(m => m.user.id !== user?.id)?.user.id] === "online")
                           ? "bg-brand-500" 
                           : "bg-slate-400"
@@ -619,7 +666,7 @@ export default function Dashboard() {
                     <div className="flex items-center justify-between">
                       <h5 className="font-semibold text-sm truncate text-slate-900 dark:text-slate-100">{chat.name}</h5>
                       {chat.last_message_time && (
-                        <span className="text-xxs text-slate-400 dark:text-slate-500">
+                        <span className="text-xxs text-slate-400 dark:text-slate-500 shrink-0 ml-2">
                           {new Date(chat.last_message_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       )}
@@ -635,7 +682,7 @@ export default function Dashboard() {
                       )}
                       
                       {chat.unread_count > 0 && (
-                        <span className="w-5 h-5 bg-brand-500 text-white rounded-full flex items-center justify-center text-xxs font-bold animate-bounce">
+                        <span className="w-5 h-5 bg-brand-500 text-white rounded-full flex items-center justify-center text-xxs font-bold animate-bounce shrink-0">
                           {chat.unread_count}
                         </span>
                       )}
@@ -715,7 +762,6 @@ export default function Dashboard() {
               </div>
               
               <div className="flex items-center gap-2">
-                {/* Voice Call */}
                 <button
                   onClick={() => startCall("voice")}
                   className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition-colors"
@@ -723,7 +769,6 @@ export default function Dashboard() {
                 >
                   <Phone className="w-4 h-4" />
                 </button>
-                {/* Video Call */}
                 <button
                   onClick={() => startCall("video")}
                   className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition-colors"
@@ -731,7 +776,6 @@ export default function Dashboard() {
                 >
                   <Video className="w-4 h-4" />
                 </button>
-                {/* Media Gallery */}
                 <button
                   onClick={() => {
                     fetchMediaGallery(activeChatId);
@@ -742,7 +786,6 @@ export default function Dashboard() {
                 >
                   <Folder className="w-4 h-4" />
                 </button>
-                {/* AI Chat Summary button */}
                 <button
                   onClick={handleGetChatSummary}
                   className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/60 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-sm"
@@ -789,11 +832,8 @@ export default function Dashboard() {
                       </span>
 
                       <div className="flex items-center gap-2 max-w-lg relative">
-                        
-                        {/* Hover Action Toolbar */}
                         {msg.message_type !== "deleted" && (
                           <div className={`absolute top-0 -translate-y-full flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-1 shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-20 ${isMe ? "right-0" : "left-0"}`}>
-                            {/* Reaction button */}
                             <button
                               onClick={() => setActiveReactionMsgId(activeReactionMsgId === msg.id ? null : msg.id)}
                               className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-300"
@@ -801,7 +841,6 @@ export default function Dashboard() {
                             >
                               <Smile className="w-3.5 h-3.5" />
                             </button>
-                            {/* Reply button */}
                             <button
                               onClick={() => setReplyingTo(msg)}
                               className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-300"
@@ -809,7 +848,6 @@ export default function Dashboard() {
                             >
                               <Reply className="w-3.5 h-3.5" />
                             </button>
-                            {/* Pin button */}
                             <button
                               onClick={() => togglePinMessage(msg.id)}
                               className={`p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded ${msg.is_pinned ? "text-amber-500" : "text-slate-500 dark:text-slate-300"}`}
@@ -817,7 +855,6 @@ export default function Dashboard() {
                             >
                               <Pin className="w-3.5 h-3.5" />
                             </button>
-                            {/* Code Explain if code in content */}
                             {msg.content && (msg.content.includes("def ") || msg.content.includes("function") || msg.content.includes("import ") || msg.content.includes("const ")) && (
                               <button
                                 onClick={() => handleExplainCode(msg.content)}
@@ -827,7 +864,6 @@ export default function Dashboard() {
                                 <Code className="w-3.5 h-3.5" />
                               </button>
                             )}
-                            {/* Delete button */}
                             {isMe && (
                               <button
                                 onClick={() => initiateDeleteMessage(msg)}
@@ -840,7 +876,6 @@ export default function Dashboard() {
                           </div>
                         )}
 
-                        {/* Reaction Emoji Popover */}
                         {activeReactionMsgId === msg.id && (
                           <div className={`absolute -top-10 flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full px-2 py-1 shadow-lg z-30 ${isMe ? "right-0" : "left-0"}`}>
                             {EMOJI_LIST.map((emoji) => (
@@ -868,7 +903,6 @@ export default function Dashboard() {
                                     : "bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border-slate-200 dark:border-slate-800"))
                         }`}>
                           
-                          {/* Render Quoted Parent Message if replying */}
                           {msg.reply_to && (
                             <div className="mb-2 p-2 rounded-lg bg-black/10 dark:bg-white/10 border-l-2 border-brand-400 text-xs">
                               <span className="font-semibold text-xxs block opacity-75">@{msg.reply_to.sender_username}</span>
@@ -876,7 +910,6 @@ export default function Dashboard() {
                             </div>
                           )}
 
-                          {/* Message Content */}
                           {msg.message_type === "deleted" ? (
                             <div className="flex items-center gap-2 text-slate-400 dark:text-slate-500 italic py-0.5">
                               <Trash2 className="w-3.5 h-3.5 opacity-55 shrink-0" />
@@ -903,7 +936,6 @@ export default function Dashboard() {
                                 </button>
                               )}
 
-                              {/* Voice Message Bubble */}
                               {msg.message_type === "voice" && (
                                 <div className="flex flex-col gap-2 py-1 mb-2 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800/80">
                                   <div className="flex items-center gap-3">
@@ -922,7 +954,6 @@ export default function Dashboard() {
                                     </button>
                                   </div>
 
-                                  {/* AI Transcribe Button */}
                                   <button
                                     onClick={() => handleTranscribeVoice(msg.id)}
                                     className="text-xxs text-indigo-500 font-semibold flex items-center gap-1 hover:underline self-start"
@@ -939,7 +970,6 @@ export default function Dashboard() {
                                 </div>
                               )}
 
-                              {/* Poll Message Bubble */}
                               {msg.message_type === "poll" && (
                                 <div className="p-3 bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800/80 w-64 md:w-80">
                                   <div className="flex items-center gap-2 mb-2">
@@ -948,7 +978,6 @@ export default function Dashboard() {
                                   </div>
                                   <p className="font-semibold text-sm mb-3">{msg.content?.replace("📊 Poll: ", "")}</p>
                                   
-                                  {/* Render Poll Options */}
                                   {polls.find(p => p.message_id === msg.id)?.options.map((opt) => {
                                     const poll = polls.find(p => p.message_id === msg.id);
                                     const percent = poll?.total_votes ? Math.round((opt.vote_count / poll.total_votes) * 100) : 0;
@@ -977,7 +1006,6 @@ export default function Dashboard() {
                                 </div>
                               )}
 
-                              {/* Standard Text Message Content */}
                               {msg.message_type !== "poll" && msg.content && (
                                 <p className="leading-relaxed break-words whitespace-pre-wrap">
                                   {translatedMessages[msg.id] || msg.content}
@@ -992,7 +1020,6 @@ export default function Dashboard() {
                             </div>
                           )}
 
-                          {/* Reaction Pills Badges */}
                           {msg.reactions && msg.reactions.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-2 pt-1">
                               {Object.entries(
@@ -1009,7 +1036,6 @@ export default function Dashboard() {
                             </div>
                           )}
 
-                          {/* Timestamp & Status receipts */}
                           <div className="flex items-center justify-end gap-1.5 mt-2 text-xxs opacity-70">
                             <span>
                               {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -1031,7 +1057,7 @@ export default function Dashboard() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Replying Banner Header above input */}
+            {/* Replying Banner Header */}
             {replyingTo && (
               <div className="px-4 py-2 bg-brand-500/10 border-t border-brand-500/20 flex items-center justify-between text-xs text-slate-700 dark:text-slate-200">
                 <div className="flex items-center gap-2 truncate">
@@ -1071,7 +1097,6 @@ export default function Dashboard() {
                 className="hidden" 
               />
 
-              {/* Attachment Button */}
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploadingFile}
@@ -1081,7 +1106,6 @@ export default function Dashboard() {
                 <Paperclip className="w-5 h-5" />
               </button>
 
-              {/* Create Poll Button */}
               <button
                 onClick={() => setIsPollModalOpen(true)}
                 className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl transition-colors shrink-0"
@@ -1090,7 +1114,6 @@ export default function Dashboard() {
                 <Vote className="w-5 h-5" />
               </button>
 
-              {/* Voice Recording Control */}
               {isRecording ? (
                 <div className="flex-1 flex items-center justify-between bg-red-500/10 px-4 py-2 rounded-xl border border-red-500/30">
                   <div className="flex items-center gap-2 text-red-500 text-xs font-semibold animate-pulse">
@@ -1135,13 +1158,12 @@ export default function Dashboard() {
             </div>
           </>
         ) : (
-          /* Empty Chat Splash */
           <div className="h-full w-full flex flex-col items-center justify-center text-center p-8 text-slate-400 dark:text-slate-500">
             <div className="w-16 h-16 rounded-3xl bg-brand-500/10 flex items-center justify-center text-brand-500 mb-4 shadow-inner">
               <MessageSquare className="w-8 h-8" />
             </div>
             <h3 className="font-bold text-lg text-slate-700 dark:text-slate-200 font-display">Select a conversation to start chatting</h3>
-            <p className="text-xs max-w-sm mt-1">Choose an existing friend from your left sidebar or search for users to establish new chat connections.</p>
+            <p className="text-xs max-w-sm mt-1">Choose an existing friend from your left sidebar or click the search icon to find users by username or email.</p>
           </div>
         )}
       </div>
@@ -1204,13 +1226,11 @@ export default function Dashboard() {
               {activeCall.isIncoming ? `Incoming ${activeCall.callType} Call...` : `Active ${activeCall.callType} Call`}
             </p>
 
-            {/* Video Streams Container (Simulated/Real canvas WebRTC placeholder) */}
             <div className="w-full h-48 bg-slate-950 rounded-2xl border border-slate-800 mb-6 flex items-center justify-center relative overflow-hidden">
               <Video className="w-12 h-12 text-slate-700 animate-bounce" />
               <span className="absolute bottom-3 left-3 text-xxs text-slate-400 font-mono">Stream Encrypted (AES-256)</span>
             </div>
 
-            {/* Call Action Controls */}
             <div className="flex items-center gap-4">
               <button
                 onClick={() => setIsMuted(!isMuted)}
@@ -1373,45 +1393,73 @@ export default function Dashboard() {
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4">
               <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Search className="w-5 h-5 text-brand-500" />
-                Find Connections
+                Find Connections by Username or Email
               </h3>
               <button onClick={() => setIsSearchOpen(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
                 <X className="w-5 h-5 text-slate-500" />
               </button>
             </div>
 
-            <form onSubmit={handleSearchUsers} className="flex gap-2 mb-4">
+            <form onSubmit={handleSearchUsersSubmit} className="flex gap-2 mb-4">
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search username or email..."
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSearchQuery(val);
+                  if (val.trim()) {
+                    executeSearch(val.trim());
+                  } else {
+                    setSearchResults([]);
+                    setHasSearched(false);
+                  }
+                }}
+                placeholder="Search by username or email..."
                 className="flex-1 p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-brand-500"
               />
-              <button type="submit" className="px-4 py-2.5 bg-brand-500 text-white rounded-xl text-xs font-semibold hover:bg-brand-600">
+              <button type="submit" className="px-4 py-2.5 bg-brand-500 text-white rounded-xl text-xs font-semibold hover:bg-brand-600 cursor-pointer">
                 Search
               </button>
             </form>
 
-            <div className="space-y-2 max-h-64 overflow-y-auto">
+            <div className="space-y-2 max-h-72 overflow-y-auto">
               {searchResults.length === 0 && hasSearched && (
-                <p className="text-xs text-slate-400 text-center py-4">No matching users found.</p>
+                <p className="text-xs text-slate-400 text-center py-6">No matching users found with that username or email.</p>
               )}
               {searchResults.map((u) => (
                 <div key={u.id} className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <img src={u.profile_photo || `https://api.dicebear.com/7.x/adventurer/svg?seed=${u.username}`} className="w-8 h-8 rounded-full" />
-                    <div>
-                      <p className="text-xs font-bold text-slate-800 dark:text-slate-200">@{u.username}</p>
-                      <p className="text-xxs text-slate-400">{u.email}</p>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <img src={u.profile_photo || `https://api.dicebear.com/7.x/adventurer/svg?seed=${u.username}`} className="w-9 h-9 rounded-full shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">@{u.username}</p>
+                      <p className="text-xxs text-slate-400 truncate">{u.email}</p>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleSendRequest(u.username)}
-                    className="px-3 py-1 bg-brand-500/10 text-brand-500 text-xs font-semibold rounded-lg hover:bg-brand-500 hover:text-white transition-colors"
-                  >
-                    Add Friend
-                  </button>
+                  <div className="shrink-0 ml-2">
+                    {u.friendship_status === "accepted" ? (
+                      <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 text-xs font-semibold rounded-lg">
+                        Friends
+                      </span>
+                    ) : u.friendship_status === "sent_pending" ? (
+                      <span className="px-3 py-1 bg-amber-500/10 text-amber-500 text-xs font-semibold rounded-lg">
+                        Request Sent
+                      </span>
+                    ) : u.friendship_status === "received_pending" ? (
+                      <button
+                        onClick={() => handleFriendResponse(u.id, "accepted")}
+                        className="px-3 py-1 bg-brand-500 text-white text-xs font-semibold rounded-lg hover:bg-brand-600 transition-colors cursor-pointer"
+                      >
+                        Accept Request
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleSendRequest(u.username)}
+                        className="px-3 py-1 bg-brand-500/10 text-brand-500 text-xs font-semibold rounded-lg hover:bg-brand-500 hover:text-white transition-colors cursor-pointer"
+                      >
+                        Add Friend
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1441,8 +1489,8 @@ export default function Dashboard() {
                     <div key={req.id} className="p-3 mt-1 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
                       <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">@{req.sender_username}</span>
                       <div className="flex gap-1">
-                        <button onClick={() => handleFriendResponse(req.id, "accepted")} className="px-2.5 py-1 bg-brand-500 text-white rounded-lg text-xxs font-bold">Accept</button>
-                        <button onClick={() => handleFriendResponse(req.id, "rejected")} className="px-2.5 py-1 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-xxs font-bold">Decline</button>
+                        <button onClick={() => handleFriendResponse(req.id, "accepted")} className="px-2.5 py-1 bg-brand-500 text-white rounded-lg text-xxs font-bold cursor-pointer">Accept</button>
+                        <button onClick={() => handleFriendResponse(req.id, "rejected")} className="px-2.5 py-1 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-xxs font-bold cursor-pointer">Decline</button>
                       </div>
                     </div>
                   ))}
@@ -1499,8 +1547,8 @@ export default function Dashboard() {
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setIsProfileOpen(false)} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-xs font-semibold rounded-xl">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-brand-500 text-white text-xs font-semibold rounded-xl hover:bg-brand-600 shadow-md">Save Changes</button>
+                <button type="button" onClick={() => setIsProfileOpen(false)} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-xs font-semibold rounded-xl cursor-pointer">Cancel</button>
+                <button type="submit" className="px-4 py-2 bg-brand-500 text-white text-xs font-semibold rounded-xl hover:bg-brand-600 shadow-md cursor-pointer">Save Changes</button>
               </div>
             </form>
           </div>
@@ -1553,8 +1601,8 @@ export default function Dashboard() {
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setIsGroupOpen(false)} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-xs font-semibold rounded-xl">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-brand-500 text-white text-xs font-semibold rounded-xl hover:bg-brand-600 shadow-md">Create Group</button>
+                <button type="button" onClick={() => setIsGroupOpen(false)} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-xs font-semibold rounded-xl cursor-pointer">Cancel</button>
+                <button type="submit" className="px-4 py-2 bg-brand-500 text-white text-xs font-semibold rounded-xl hover:bg-brand-600 shadow-md cursor-pointer">Create Group</button>
               </div>
             </form>
           </div>
@@ -1571,19 +1619,19 @@ export default function Dashboard() {
             <div className="flex flex-col gap-2">
               <button
                 onClick={handleDeleteForEveryone}
-                className="w-full py-2.5 bg-red-500 hover:bg-red-600 text-white font-semibold text-xs rounded-xl shadow-md transition-colors"
+                className="w-full py-2.5 bg-red-500 hover:bg-red-600 text-white font-semibold text-xs rounded-xl shadow-md transition-colors cursor-pointer"
               >
                 Delete for Everyone
               </button>
               <button
                 onClick={handleDeleteForMe}
-                className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold text-xs rounded-xl hover:bg-slate-200 dark:hover:bg-slate-750 transition-colors"
+                className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold text-xs rounded-xl hover:bg-slate-200 dark:hover:bg-slate-750 transition-colors cursor-pointer"
               >
                 Delete for Me
               </button>
               <button
                 onClick={() => setIsDeleteModalOpen(false)}
-                className="w-full py-2 text-xs text-slate-400 font-medium hover:underline mt-1"
+                className="w-full py-2 text-xs text-slate-400 font-medium hover:underline mt-1 cursor-pointer"
               >
                 Cancel
               </button>
