@@ -56,14 +56,17 @@ export const AuthProvider = ({ children }) => {
       console.error("Login failed:", err);
       const detail = err.response?.data?.detail;
       const status = err.response?.status;
+      if (status === 401) {
+        throw new Error(detail || "Incorrect email or password. If you haven't registered on this workspace yet, please click 'Sign Up' to create an account.");
+      }
       if (status === 403 || (detail && detail.includes("verified"))) {
         throw { requires_verification: true, email: email, message: detail };
       }
-      // Google account detected — suggest Google Sign-In
       if (status === 400 && detail && detail.includes("Google Sign-In")) {
         throw new Error(detail);
       }
       throw new Error(detail || "Authentication failed.");
+
     } finally {
       setLoading(false);
     }
