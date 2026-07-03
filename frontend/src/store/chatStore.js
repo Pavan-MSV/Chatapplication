@@ -3,13 +3,11 @@ import axios from "axios";
 
 import { API_BASE } from "../config/api";
 
-// Helper to get headers
 const getHeaders = () => {
   const token = localStorage.getItem("token");
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
-// Helper to decode user ID from token
 const getUserIdFromToken = () => {
   const token = localStorage.getItem("token");
   if (!token) return null;
@@ -28,36 +26,43 @@ export const useChatStore = create((set, get) => ({
   messages: [],
   friends: [],
   pendingRequests: [],
-  typingMembers: {}, // chat_id -> { user_id: username }
-  onlineUsers: {},   // user_id -> status ('online' | 'offline' | 'away')
+  typingMembers: {}, 
+  onlineUsers: {},   
+
+  // New Feature States
+  replyingTo: null,
+  pinnedMessages: [],
+  mediaGallery: [],
+  polls: [],
+  activeCall: null,
 
   setChats: (chats) => set({ chats }),
+  setReplyingTo: (msg) => set({ replyingTo: msg }),
+  setActiveCall: (callState) => set({ activeCall: callState }),
   
   setActiveChatId: async (chatId) => {
-    set({ activeChatId: chatId });
+    set({ activeChatId: chatId, replyingTo: null });
     if (chatId) {
-      // Find the chat object
       const chat = get().chats.find((c) => c.id === chatId);
       set({ activeChat: chat || null });
       
-      // Fetch message history
       await get().fetchMessages(chatId);
+      get().fetchPinnedMessages(chatId);
+      get().fetchPolls(chatId);
       
-      // Reset unread count for this chat locally
       set((state) => ({
         chats: state.chats.map((c) =>
           c.id === chatId ? { ...c, unread_count: 0 } : c
         ),
       }));
 
-      // Trigger read receipt in backend
       try {
         await axios.post(`${API_BASE}/messages/seen/${chatId}`, {}, { headers: getHeaders() });
       } catch (err) {
         console.error("Failed to mark messages as seen:", err);
       }
     } else {
-      set({ activeChat: null, messages: [] });
+      set({ activeChat: null, messages: [], pinnedMessages: [], polls: [], mediaGallery: [] });
     }
   },
 
@@ -66,7 +71,6 @@ export const useChatStore = create((set, get) => ({
       const res = await axios.get(`${API_BASE}/chats`, { headers: getHeaders() });
       set({ chats: res.data });
       
-      // Sync online statuses from chat members
       const statuses = { ...get().onlineUsers };
       res.data.forEach((chat) => {
         chat.members.forEach((m) => {
@@ -101,7 +105,6 @@ export const useChatStore = create((set, get) => ({
   addMessage: (message) => {
     const { messages, activeChatId, chats } = get();
     
-    // Check if deleted for me
     const userId = getUserIdFromToken();
     if (userId) {
       const deletedIds = JSON.parse(localStorage.getItem(`deletedForMe_${userId}`) || "[]");
@@ -110,15 +113,12 @@ export const useChatStore = create((set, get) => ({
       }
     }
     
-    // If message belongs to active chat, append it
     if (message.chat_id === activeChatId) {
-      // Avoid duplicates
       if (!messages.find((m) => m.id === message.id)) {
         set({ messages: [...messages, message] });
       }
     }
 
-    // Update last message in the chat list and increment unread if not active chat
     set({
       chats: chats.map((c) => {
         if (c.id === message.chat_id) {
@@ -134,6 +134,102 @@ export const useChatStore = create((set, get) => ({
         return c;
       })
     });
+  },
+
+  updateMessageReactions: (messageId, reactions) => {
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId ? { ...m, reactions } : m
+      )
+    }));
+  },
+
+  updateMessagePinStatus: (messageId, isPinned) => {
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId ? { ...m, is_pinned: isPinned } : m
+      )
+    }));
+    if (get().activeChatId) {
+      get().fetchPinnedMessages(get().activeChatId);
+    }
+  },
+
+  toggleReaction: async (messageId, emoji) => {
+    try {
+      const res = await axios.post(`${API_BASE}/messages/${messageId}/react`, { emoji }, { headers: getHeaders() });
+      get().updateMessageReactions(messageId, res.data.reactions);
+    } catch (err) {
+      console.error("Error toggling reaction:", err);
+    }
+  },
+
+  togglePinMessage: async (messageId) => {
+    try {
+      const res = await axios.post(`${API_BASE}/messages/${messageId}/pin`, {}, { headers: getHeaders() });
+      get().updateMessagePinStatus(messageId, res.data.is_pinned);
+    } catch (err) {
+      console.error("Error pinning message:", err);
+    }
+  },
+
+  fetchPinnedMessages: async (chatId) => {
+    if (!chatId) return;
+    try {
+      const res = await axios.get(`${API_BASE}/chats/${chatId}/pinned`, { headers: getHeaders() });
+      set({ pinnedMessages: res.data });
+    } catch (err) {
+      console.error("Error fetching pinned messages:", err);
+    }
+  },
+
+  fetchMediaGallery: async (chatId) => {
+    if (!chatId) return;
+    try {
+      const res = await axios.get(`${API_BASE}/chats/${chatId}/media`, { headers: getHeaders() });
+      set({ mediaGallery: res.data });
+    } catch (err) {
+      console.error("Error fetching chat media:", err);
+    }
+  },
+
+  fetchPolls: async (chatId) => {
+    if (!chatId) return;
+    try {
+      const res = await axios.get(`${API_BASE}/chats/${chatId}/polls`, { headers: getHeaders() });
+      set({ polls: res.data });
+    } catch (err) {
+      console.error("Error fetching polls:", err);
+    }
+  },
+
+  createPoll: async (chatId, question, options) => {
+    try {
+      const res = await axios.post(`${API_BASE}/chats/${chatId}/polls`, { question, options }, { headers: getHeaders() });
+      set((state) => ({ polls: [res.data, ...state.polls] }));
+      get().fetchMessages(chatId);
+    } catch (err) {
+      console.error("Error creating poll:", err);
+    }
+  },
+
+  votePoll: async (chatId, pollId, optionId) => {
+    try {
+      const res = await axios.post(`${API_BASE}/chats/${chatId}/polls/${pollId}/vote`, { option_id: optionId }, { headers: getHeaders() });
+      set((state) => ({
+        polls: state.polls.map((p) => (p.id === pollId ? res.data : p))
+      }));
+    } catch (err) {
+      console.error("Error voting in poll:", err);
+    }
+  },
+
+  updatePollState: (pollData) => {
+    set((state) => ({
+      polls: state.polls.some((p) => p.id === pollData.id)
+        ? state.polls.map((p) => (p.id === pollData.id ? pollData : p))
+        : [pollData, ...state.polls]
+    }));
   },
 
   removeMessage: (messageId, chatId) => {
@@ -214,7 +310,6 @@ export const useChatStore = create((set, get) => ({
       const res = await axios.get(`${API_BASE}/friends/list`, { headers: getHeaders() });
       set({ friends: res.data });
       
-      // Update online status mapping
       const statuses = { ...get().onlineUsers };
       res.data.forEach((f) => {
         statuses[f.id] = f.status;

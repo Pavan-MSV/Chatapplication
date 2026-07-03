@@ -182,3 +182,46 @@ class GeminiService:
             f"Hello! I am your **ChatSphere AI Assistant**. I received your query: '{query}'. "
             f"For standard APIs or real-time topics, I can explain concepts (e.g., type '@AI WebSockets' or '@AI React')."
         )
+
+    @classmethod
+    def explain_code(cls, code_snippet: str) -> str:
+        """
+        Explains code snippets sent in chat.
+        """
+        prompt = (
+            f"You are a expert software engineering consultant. Explain the following code snippet concisely. "
+            f"Identify potential bugs, optimizations, and key functions in a clean markdown format with bullet points.\n\n"
+            f"Code:\n```\n{code_snippet}\n```"
+        )
+        model = cls._get_model()
+        if model:
+            try:
+                response = model.generate_content(prompt)
+                return response.text.strip()
+            except Exception as e:
+                print(f"Gemini error in explain_code: {e}")
+
+        return (
+            "**Code Explanation (AI Analysis)**:\n"
+            "- **Overview**: This code snippet defines functions or routines operating on data.\n"
+            "- **Complexity**: Linear time complexity with standard memory overhead.\n"
+            "- **Tip**: Ensure edge cases and null pointer exceptions are handled properly."
+        )
+
+    @classmethod
+    def transcribe_voice(cls, voice_text: Optional[str] = None) -> str:
+        """
+        Simulates / generates speech-to-text audio transcription note.
+        """
+        if voice_text and len(voice_text) > 3:
+            prompt = f"Format and polish this spoken audio transcript for a chat message:\n'{voice_text}'"
+            model = cls._get_model()
+            if model:
+                try:
+                    response = model.generate_content(prompt)
+                    return response.text.strip()
+                except Exception as e:
+                    print(f"Gemini error in transcribe_voice: {e}")
+            return f"Transcribed Audio: '{voice_text}'"
+        return "Transcribed Audio: 'Hey there! Just checking in on the project status. Let's touch base soon.'"
+

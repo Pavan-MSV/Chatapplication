@@ -108,3 +108,38 @@ def translate_message(
     """
     translated = GeminiService.translate_text(payload.text, payload.target_language)
     return TranslateResponse(translated_text=translated)
+
+@router.post("/transcribe")
+def transcribe_voice_message(
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Transcribes audio voice message into text using Gemini AI and saves it to the message.
+    """
+    message = db.query(Message).filter(Message.id == message_id).first()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    transcription = GeminiService.transcribe_voice(message.content)
+    message.transcription = transcription
+    db.commit()
+    db.refresh(message)
+    return {"transcription": transcription, "message_id": message_id}
+
+@router.post("/code-explain")
+def explain_code_snippet(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Analyzes and explains code snippets sent in chat.
+    """
+    code_text = payload.get("code", "")
+    if not code_text:
+        raise HTTPException(status_code=400, detail="Code snippet is required")
+    explanation = GeminiService.explain_code(code_text)
+    return {"explanation": explanation}
+

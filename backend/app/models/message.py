@@ -20,3 +20,10 @@ class Message(Base):
     is_seen = Column(Boolean, default=False)
     seen_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # New Features
+    reply_to_id = Column(String, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
+    is_pinned = Column(Boolean, default=False)
+    pinned_at = Column(DateTime(timezone=True), nullable=True)
+    transcription = Column(Text, nullable=True)
+

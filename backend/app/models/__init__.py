@@ -5,6 +5,8 @@ from backend.app.models.chat import Chat, ChatMember
 from backend.app.models.message import Message
 from backend.app.models.notification import Notification
 from backend.app.models.ai import AIHistory
+from backend.app.models.reaction import MessageReaction
+from backend.app.models.poll import Poll, PollOption, PollVote
 
 __all__ = [
     "Base",
@@ -15,4 +17,8 @@ __all__ = [
     "Message",
     "Notification",
     "AIHistory",
+    "MessageReaction",
+    "Poll",
+    "PollOption",
+    "PollVote",
 ]

@@ -12,8 +12,11 @@ export const SocketProvider = ({ children }) => {
   const [isConnected, setIsConnected] = useState(false);
   
   const addMessage = useChatStore((s) => s.addMessage);
-  const removeMessage = useChatStore((s) => s.removeMessage);
   const markMessageDeleted = useChatStore((s) => s.markMessageDeleted);
+  const updateMessageReactions = useChatStore((s) => s.updateMessageReactions);
+  const updateMessagePinStatus = useChatStore((s) => s.updateMessagePinStatus);
+  const updatePollState = useChatStore((s) => s.updatePollState);
+  const setActiveCall = useChatStore((s) => s.setActiveCall);
   const setTyping = useChatStore((s) => s.setTyping);
   const setOnlineStatus = useChatStore((s) => s.setOnlineStatus);
   const fetchFriends = useChatStore((s) => s.fetchFriends);
@@ -31,7 +34,6 @@ export const SocketProvider = ({ children }) => {
       return;
     }
 
-    // Close existing connection if any
     if (socketRef.current) {
       socketRef.current.close();
     }
@@ -59,6 +61,33 @@ export const SocketProvider = ({ children }) => {
           case "message_deleted":
             markMessageDeleted(data.message_id, data.chat_id);
             break;
+
+          case "reaction_update":
+            updateMessageReactions(data.message_id, data.reactions);
+            break;
+
+          case "pin_update":
+            updateMessagePinStatus(data.message_id, data.is_pinned);
+            break;
+
+          case "poll_created":
+          case "poll_voted":
+            updatePollState(data.poll);
+            break;
+
+          case "webrtc_signal":
+            if (data.signal_type === "call_request") {
+              setActiveCall({
+                isIncoming: true,
+                callerName: data.sender_username,
+                callerId: data.sender_id,
+                chatId: data.chat_id,
+                callType: data.call_type || "video"
+              });
+            } else if (data.signal_type === "end_call") {
+              setActiveCall(null);
+            }
+            break;
             
           case "typing_update":
             setTyping(data.chat_id, data.user_id, data.username, data.is_typing);
@@ -70,7 +99,6 @@ export const SocketProvider = ({ children }) => {
             
           case "notification":
             addNotification(data);
-            // Refresh lists depending on notification actions
             if (data.type === "friend_request") {
               fetchPendingRequests();
             } else if (data.type === "request_accepted" || data.type === "group_invite") {
@@ -82,10 +110,6 @@ export const SocketProvider = ({ children }) => {
           case "request_accepted":
             fetchFriends();
             fetchChats();
-            break;
-            
-          case "messages_seen":
-            // Optional: trigger state updates for seen receipts
             break;
 
           default:
@@ -100,7 +124,6 @@ export const SocketProvider = ({ children }) => {
       console.log("WebSocket connection closed. Reconnecting in 3 seconds...");
       setIsConnected(false);
       socketRef.current = null;
-      // Reconnect loop if user is still logged in
       setTimeout(() => {
         if (localStorage.getItem("token")) {
           connectSocket();
@@ -126,7 +149,6 @@ export const SocketProvider = ({ children }) => {
     };
   }, []);
 
-  // Event emitters
   const sendTypingStart = (chatId) => {
     if (socketRef.current && isConnected) {
       socketRef.current.send(
@@ -160,6 +182,17 @@ export const SocketProvider = ({ children }) => {
     }
   };
 
+  const sendWebRTCSignal = (signalData) => {
+    if (socketRef.current && isConnected) {
+      socketRef.current.send(
+        JSON.stringify({
+          event: "webrtc_signal",
+          data: signalData
+        })
+      );
+    }
+  };
+
   return (
     <SocketContext.Provider
       value={{
@@ -168,7 +201,8 @@ export const SocketProvider = ({ children }) => {
         connectSocket,
         sendTypingStart,
         sendTypingStop,
-        sendMarkSeen
+        sendMarkSeen,
+        sendWebRTCSignal
       }}
     >
       {children}

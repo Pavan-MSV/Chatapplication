@@ -145,6 +145,25 @@ async def websocket_endpoint(
                             db=db
                         )
 
+            elif event == "webrtc_signal":
+                target_user_id = event_data.get("target_user_id")
+                chat_id = event_data.get("chat_id")
+                signal_payload = {
+                    "sender_id": user_id,
+                    "sender_username": username,
+                    "chat_id": chat_id,
+                    "signal_type": event_data.get("signal_type"), # offer, answer, ice_candidate, end_call, call_request
+                    "sdp": event_data.get("sdp"),
+                    "candidate": event_data.get("candidate"),
+                    "call_type": event_data.get("call_type", "video") # video or voice
+                }
+
+                if target_user_id:
+                    await manager.send_to_user(target_user_id, "webrtc_signal", signal_payload)
+                elif chat_id:
+                    await manager.broadcast_to_chat(chat_id, "webrtc_signal", signal_payload, db)
+
+
     except WebSocketDisconnect:
         await manager.disconnect(user_id, websocket)
     except Exception as e:

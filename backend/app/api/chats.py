@@ -8,39 +8,66 @@ from backend.app.models.user import User
 from backend.app.models.chat import Chat, ChatMember
 from backend.app.models.message import Message
 from backend.app.models.notification import Notification
+from backend.app.models.poll import Poll, PollOption, PollVote
+from backend.app.models.reaction import MessageReaction
 from backend.app.schemas import (
     ChatResponse,
     GroupCreate,
     GroupUpdate,
     ChatMemberResponse,
+    PollCreate,
+    PollVoteCreate,
+    PollResponse,
 )
 from backend.app.core.auth import get_current_user
 from backend.app.core.websocket import manager
 
 router = APIRouter()
 
+def format_poll_response(poll: Poll, db: Session, current_user_id: str) -> dict:
+    options = db.query(PollOption).filter(PollOption.poll_id == poll.id).all()
+    creator = db.query(User).filter(User.id == poll.creator_id).first()
+    
+    all_votes = db.query(PollVote).filter(PollVote.poll_id == poll.id).all()
+    total_votes = len(all_votes)
+    
+    option_responses = []
+    for opt in options:
+        opt_votes = [v for v in all_votes if v.option_id == opt.id]
+        voted_by_me = any(v.user_id == current_user_id for v in opt_votes)
+        option_responses.append({
+            "id": opt.id,
+            "option_text": opt.option_text,
+            "vote_count": len(opt_votes),
+            "voted_by_me": voted_by_me
+        })
+
+    return {
+        "id": poll.id,
+        "chat_id": poll.chat_id,
+        "message_id": poll.message_id,
+        "creator_id": poll.creator_id,
+        "creator_username": creator.username if creator else "User",
+        "question": poll.question,
+        "is_closed": poll.is_closed,
+        "options": option_responses,
+        "total_votes": total_votes,
+        "created_at": poll.created_at
+    }
+
 @router.get("", response_model=List[ChatResponse])
 def get_user_chats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Retrieves all chats (DMs and Groups) that the current user belongs to.
-    Enriches the chats with last message details and unread count.
-    """
-    # Fetch member associations for the current user
     user_memberships = db.query(ChatMember).filter(ChatMember.user_id == current_user.id).all()
     chat_ids = [m.chat_id for m in user_memberships]
-
-    # Query all those chats
     chats = db.query(Chat).filter(Chat.id.in_(chat_ids)).all()
 
     response_chats = []
     for chat in chats:
-        # Fetch members for this chat
         members = db.query(ChatMember).filter(ChatMember.chat_id == chat.id).all()
         
-        # Serialize members
         member_responses = []
         other_user = None
         for member in members:
@@ -60,7 +87,6 @@ def get_user_chats(
                 )
             )
 
-        # Find last message
         last_msg = db.query(Message).filter(Message.chat_id == chat.id).order_by(Message.created_at.desc()).first()
         last_content = None
         last_time = None
@@ -71,14 +97,12 @@ def get_user_chats(
                 last_content = f"[{last_msg.message_type.capitalize()} Attachment]"
             last_time = last_msg.created_at
 
-        # Calculate unread count
         unread_count = db.query(Message).filter(
             Message.chat_id == chat.id,
             Message.sender_id != current_user.id,
             Message.is_seen == False
         ).count()
 
-        # Build response schema. If DM, personalize chat name & icon using the other user's info
         chat_name = chat.name
         chat_icon = chat.icon_url
         chat_description = chat.description
@@ -104,7 +128,6 @@ def get_user_chats(
             )
         )
 
-    # Sort chats by last message time, or creation time if no messages
     response_chats.sort(
         key=lambda x: x.last_message_time or x.created_at, 
         reverse=True
@@ -117,10 +140,6 @@ async def create_group(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Creates a new Group Chat, adds the creator as admin, and seeds initial members.
-    """
-    # Create main chat
     chat = Chat(
         is_group=True,
         name=payload.name,
@@ -132,7 +151,6 @@ async def create_group(
     db.commit()
     db.refresh(chat)
 
-    # Add creator as admin
     admin_member = ChatMember(
         chat_id=chat.id,
         user_id=current_user.id,
@@ -140,22 +158,18 @@ async def create_group(
     )
     db.add(admin_member)
 
-    # Clean duplicates and remove creator ID if passed in list
     member_ids = list(set(payload.member_ids))
     if current_user.id in member_ids:
         member_ids.remove(current_user.id)
 
-    # Add other members
     members_to_add = []
     for uid in member_ids:
-        # Check if user exists
         user = db.query(User).filter(User.id == uid).first()
         if user:
             members_to_add.append(
                 ChatMember(chat_id=chat.id, user_id=uid, role="member")
             )
             
-            # Create notification for invitation
             notif = Notification(
                 user_id=uid,
                 type="group_invite",
@@ -169,7 +183,6 @@ async def create_group(
         db.add_all(members_to_add)
     db.commit()
 
-    # Query all added members to form detailed response
     db.refresh(chat)
     members = db.query(ChatMember).filter(ChatMember.chat_id == chat.id).all()
     member_responses = []
@@ -185,7 +198,6 @@ async def create_group(
             )
         )
 
-        # Notify members online
         if member.user_id != current_user.id:
             await manager.send_to_user(
                 member.user_id, 
@@ -215,9 +227,6 @@ def get_chat_details(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Retrieves details of a single chat channel. Validates membership.
-    """
     membership = db.query(ChatMember).filter(
         ChatMember.chat_id == chat_id,
         ChatMember.user_id == current_user.id
@@ -273,6 +282,237 @@ def get_chat_details(
         members=member_responses
     )
 
+@router.get("/{chat_id}/pinned")
+def get_pinned_messages(
+    chat_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Fetches all pinned messages in a chat.
+    """
+    membership = db.query(ChatMember).filter(
+        ChatMember.chat_id == chat_id,
+        ChatMember.user_id == current_user.id
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a chat member.")
+
+    pinned = db.query(Message).filter(
+        Message.chat_id == chat_id,
+        Message.is_pinned == True
+    ).order_by(Message.pinned_at.desc()).all()
+
+    all_users = db.query(User).all()
+    user_map = {u.id: u.username for u in all_users}
+
+    return [{
+        "id": m.id,
+        "chat_id": m.chat_id,
+        "sender_id": m.sender_id,
+        "sender_username": user_map.get(m.sender_id, "User"),
+        "content": m.content,
+        "message_type": m.message_type,
+        "pinned_at": m.pinned_at.isoformat() if m.pinned_at else None
+    } for m in pinned]
+
+@router.get("/{chat_id}/media")
+def get_chat_media(
+    chat_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Fetches all image, file, and voice messages in a chat for the Shared Media Gallery.
+    """
+    membership = db.query(ChatMember).filter(
+        ChatMember.chat_id == chat_id,
+        ChatMember.user_id == current_user.id
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a chat member.")
+
+    media_messages = db.query(Message).filter(
+        Message.chat_id == chat_id,
+        Message.message_type.in_(["image", "file", "voice"])
+    ).order_by(Message.created_at.desc()).all()
+
+    all_users = db.query(User).all()
+    user_map = {u.id: u.username for u in all_users}
+
+    return [{
+        "id": m.id,
+        "chat_id": m.chat_id,
+        "sender_id": m.sender_id,
+        "sender_username": user_map.get(m.sender_id, "User"),
+        "content": m.content,
+        "message_type": m.message_type,
+        "file_url": m.file_url,
+        "file_name": m.file_name,
+        "file_size": m.file_size,
+        "created_at": m.created_at.isoformat() if m.created_at else None
+    } for m in media_messages]
+
+@router.post("/{chat_id}/polls")
+async def create_poll(
+    chat_id: str,
+    payload: PollCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Creates an in-chat interactive Poll and sends a poll message to the channel.
+    """
+    membership = db.query(ChatMember).filter(
+        ChatMember.chat_id == chat_id,
+        ChatMember.user_id == current_user.id
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a chat member.")
+
+    if len(payload.options) < 2:
+        raise HTTPException(status_code=400, detail="Poll must have at least 2 options.")
+
+    # Create message entry for poll
+    msg = Message(
+        chat_id=chat_id,
+        sender_id=current_user.id,
+        content=f"📊 Poll: {payload.question}",
+        message_type="poll"
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    # Create Poll
+    poll = Poll(
+        chat_id=chat_id,
+        message_id=msg.id,
+        creator_id=current_user.id,
+        question=payload.question
+    )
+    db.add(poll)
+    db.commit()
+    db.refresh(poll)
+
+    # Create Poll Options
+    for opt_text in payload.options:
+        opt = PollOption(poll_id=poll.id, option_text=opt_text)
+        db.add(opt)
+    db.commit()
+
+    poll_data = format_poll_response(poll, db, current_user.id)
+
+    # Broadcast websocket event
+    await manager.broadcast_to_chat(
+        chat_id,
+        "poll_created",
+        {"chat_id": chat_id, "poll": poll_data},
+        db
+    )
+
+    return poll_data
+
+@router.get("/{chat_id}/polls")
+def get_polls(
+    chat_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Fetches all active/closed polls in a chat channel.
+    """
+    membership = db.query(ChatMember).filter(
+        ChatMember.chat_id == chat_id,
+        ChatMember.user_id == current_user.id
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a chat member.")
+
+    polls = db.query(Poll).filter(Poll.chat_id == chat_id).order_by(Poll.created_at.desc()).all()
+    return [format_poll_response(p, db, current_user.id) for p in polls]
+
+@router.post("/{chat_id}/polls/{poll_id}/vote")
+async def vote_poll(
+    chat_id: str,
+    poll_id: str,
+    payload: PollVoteCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Votes on a poll option or updates an existing vote.
+    """
+    poll = db.query(Poll).filter(Poll.id == poll_id, Poll.chat_id == chat_id).first()
+    if not poll:
+        raise HTTPException(status_code=404, detail="Poll not found.")
+
+    if poll.is_closed:
+        raise HTTPException(status_code=400, detail="Poll is closed.")
+
+    existing_vote = db.query(PollVote).filter(
+        PollVote.poll_id == poll_id,
+        PollVote.user_id == current_user.id
+    ).first()
+
+    if existing_vote:
+        existing_vote.option_id = payload.option_id
+    else:
+        new_vote = PollVote(
+            poll_id=poll_id,
+            option_id=payload.option_id,
+            user_id=current_user.id
+        )
+        db.add(new_vote)
+
+    db.commit()
+
+    poll_data = format_poll_response(poll, db, current_user.id)
+
+    await manager.broadcast_to_chat(
+        chat_id,
+        "poll_voted",
+        {"chat_id": chat_id, "poll": poll_data},
+        db
+    )
+
+    return poll_data
+
+@router.put("/group/{chat_id}/members/{user_id}/role")
+def update_member_role(
+    chat_id: str,
+    user_id: str,
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Updates a group member's role (admin, moderator, member). Requires admin rights.
+    """
+    admin_check = db.query(ChatMember).filter(
+        ChatMember.chat_id == chat_id,
+        ChatMember.user_id == current_user.id,
+        ChatMember.role == "admin"
+    ).first()
+    if not admin_check:
+        raise HTTPException(status_code=403, detail="Only group admins can update member roles.")
+
+    target_member = db.query(ChatMember).filter(
+        ChatMember.chat_id == chat_id,
+        ChatMember.user_id == user_id
+    ).first()
+    if not target_member:
+        raise HTTPException(status_code=404, detail="Member not found.")
+
+    new_role = payload.get("role", "member")
+    if new_role not in ["admin", "moderator", "member"]:
+        raise HTTPException(status_code=400, detail="Invalid role specified.")
+
+    target_member.role = new_role
+    db.commit()
+
+    return {"message": "Role updated successfully.", "role": new_role}
+
 @router.post("/group/{chat_id}/members")
 async def add_group_member(
     chat_id: str,
@@ -280,10 +520,6 @@ async def add_group_member(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Adds a user to a group chat. Requires admin rights for group modifier.
-    """
-    # Verify current user is admin of group
     admin_check = db.query(ChatMember).filter(
         ChatMember.chat_id == chat_id,
         ChatMember.user_id == current_user.id,
@@ -296,7 +532,6 @@ async def add_group_member(
             detail="Only group admins can add members."
         )
 
-    # Verify chat is group
     chat = db.query(Chat).filter(Chat.id == chat_id, Chat.is_group == True).first()
     if not chat:
         raise HTTPException(
@@ -304,7 +539,6 @@ async def add_group_member(
             detail="Target chat is not a group."
         )
 
-    # Check if target user already a member
     exists = db.query(ChatMember).filter(
         ChatMember.chat_id == chat_id,
         ChatMember.user_id == user_id
@@ -319,7 +553,6 @@ async def add_group_member(
     new_member = ChatMember(chat_id=chat_id, user_id=user_id, role="member")
     db.add(new_member)
     
-    # Notify target user
     notif = Notification(
         user_id=user_id,
         type="group_invite",
@@ -350,9 +583,6 @@ def remove_group_member(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Removes a member from a group. Requires admin rights (unless user is leaving).
-    """
     chat = db.query(Chat).filter(Chat.id == chat_id, Chat.is_group == True).first()
     if not chat:
         raise HTTPException(
@@ -360,7 +590,6 @@ def remove_group_member(
             detail="Target chat is not a group."
         )
 
-    # Check target member
     target_member = db.query(ChatMember).filter(
         ChatMember.chat_id == chat_id,
         ChatMember.user_id == user_id
@@ -372,7 +601,6 @@ def remove_group_member(
             detail="User is not a member of this group."
         )
 
-    # Verify authorization (is admin or leaving themselves)
     is_leaving_self = (user_id == current_user.id)
     
     if not is_leaving_self:
@@ -398,9 +626,6 @@ def update_group(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Updates group details (name, description, icon). Requires admin role.
-    """
     admin_check = db.query(ChatMember).filter(
         ChatMember.chat_id == chat_id,
         ChatMember.user_id == current_user.id,

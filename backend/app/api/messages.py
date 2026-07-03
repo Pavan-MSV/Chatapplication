@@ -8,10 +8,13 @@ from backend.app.database import get_db
 from backend.app.models.user import User
 from backend.app.models.chat import ChatMember
 from backend.app.models.message import Message
+from backend.app.models.reaction import MessageReaction
 from backend.app.models.ai import AIHistory
 from backend.app.schemas import (
     MessageCreate,
     MessageResponse,
+    MessageReactionResponse,
+    ReplyMessageSummary,
 )
 from backend.app.core.auth import get_current_user
 from backend.app.core.websocket import manager
@@ -19,15 +22,59 @@ from backend.app.core.gemini import GeminiService
 
 router = APIRouter()
 
+def build_message_response(msg: Message, db: Session, user_map: dict) -> dict:
+    # Build reply summary if reply_to_id exists
+    reply_summary = None
+    if msg.reply_to_id:
+        parent_msg = db.query(Message).filter(Message.id == msg.reply_to_id).first()
+        if parent_msg:
+            parent_sender_name = user_map.get(parent_msg.sender_id, "User")
+            reply_summary = {
+                "id": parent_msg.id,
+                "sender_id": parent_msg.sender_id,
+                "sender_username": parent_sender_name,
+                "content": parent_msg.content,
+                "message_type": parent_msg.message_type
+            }
+
+    # Fetch reactions for this message
+    reactions_raw = db.query(MessageReaction).filter(MessageReaction.message_id == msg.id).all()
+    reactions_list = []
+    for r in reactions_raw:
+        reactions_list.append({
+            "id": r.id,
+            "message_id": r.message_id,
+            "user_id": r.user_id,
+            "username": user_map.get(r.user_id, "User"),
+            "emoji": r.emoji,
+            "created_at": r.created_at.isoformat() if r.created_at else None
+        })
+
+    return {
+        "id": msg.id,
+        "chat_id": msg.chat_id,
+        "sender_id": msg.sender_id,
+        "sender_username": user_map.get(msg.sender_id, "User"),
+        "content": msg.content,
+        "message_type": msg.message_type,
+        "file_url": msg.file_url,
+        "file_name": msg.file_name,
+        "file_size": msg.file_size,
+        "is_seen": msg.is_seen,
+        "seen_at": msg.seen_at.isoformat() if msg.seen_at else None,
+        "created_at": msg.created_at,
+        "reply_to_id": msg.reply_to_id,
+        "reply_to": reply_summary,
+        "is_pinned": bool(msg.is_pinned),
+        "pinned_at": msg.pinned_at.isoformat() if msg.pinned_at else None,
+        "transcription": msg.transcription,
+        "reactions": reactions_list
+    }
+
 async def process_ai_assistant_query(chat_id: str, query: str, user_id: str, user_username: str):
-    """
-    Background task to query Gemini and generate the AI Assistant response in the chat room.
-    """
-    # Create database session
     from backend.app.database import SessionLocal
     db = SessionLocal()
     try:
-        # Fetch last 10 messages for context
         history = db.query(Message).filter(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(10).all()
         history.reverse()
         
@@ -37,12 +84,9 @@ async def process_ai_assistant_query(chat_id: str, query: str, user_id: str, use
             sender_name = sender.username if sender else "User"
             context_list.append(f"{sender_name}: {msg.content}")
 
-        # Query Gemini
-        # Remove the "@AI" prefix from the query
         clean_query = query.replace("@AI", "").strip()
         response_text = GeminiService.get_assistant_response(clean_query, context_list)
 
-        # Create AI Assistant Message
         ai_user_id = "00000000-0000-0000-0000-000000000000"
         ai_message = Message(
             chat_id=chat_id,
@@ -54,7 +98,6 @@ async def process_ai_assistant_query(chat_id: str, query: str, user_id: str, use
         db.commit()
         db.refresh(ai_message)
 
-        # Store in AI history
         ai_history = AIHistory(
             chat_id=chat_id,
             user_id=user_id,
@@ -64,7 +107,6 @@ async def process_ai_assistant_query(chat_id: str, query: str, user_id: str, use
         db.add(ai_history)
         db.commit()
 
-        # Build WS payload
         ws_data = {
             "id": ai_message.id,
             "chat_id": ai_message.chat_id,
@@ -77,10 +119,15 @@ async def process_ai_assistant_query(chat_id: str, query: str, user_id: str, use
             "file_size": None,
             "is_seen": False,
             "seen_at": None,
-            "created_at": ai_message.created_at.isoformat()
+            "created_at": ai_message.created_at.isoformat(),
+            "reply_to_id": None,
+            "reply_to": None,
+            "is_pinned": False,
+            "pinned_at": None,
+            "transcription": None,
+            "reactions": []
         }
 
-        # Broadcast via WebSockets
         await manager.broadcast_to_chat(chat_id, "receive_message", ws_data, db)
 
     except Exception as e:
@@ -95,10 +142,6 @@ async def send_message(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Sends a message to a chat channel and broadcasts it in real time via WebSockets.
-    """
-    # Verify membership
     membership = db.query(ChatMember).filter(
         ChatMember.chat_id == payload.chat_id,
         ChatMember.user_id == current_user.id
@@ -110,7 +153,6 @@ async def send_message(
             detail="You are not a member of this chat."
         )
 
-    # Save to database
     message = Message(
         chat_id=payload.chat_id,
         sender_id=current_user.id,
@@ -118,32 +160,24 @@ async def send_message(
         message_type=payload.message_type,
         file_url=payload.file_url,
         file_name=payload.file_name,
-        file_size=payload.file_size
+        file_size=payload.file_size,
+        reply_to_id=payload.reply_to_id
     )
     db.add(message)
     db.commit()
     db.refresh(message)
 
-    # Form WebSocket event payload
-    ws_data = {
-        "id": message.id,
-        "chat_id": message.chat_id,
-        "sender_id": message.sender_id,
-        "sender_username": current_user.username,
-        "content": message.content,
-        "message_type": message.message_type,
-        "file_url": message.file_url,
-        "file_name": message.file_name,
-        "file_size": message.file_size,
-        "is_seen": message.is_seen,
-        "seen_at": None,
-        "created_at": message.created_at.isoformat()
-    }
+    # Build response dictionary & WS payload
+    all_users = db.query(User).all()
+    user_map = {u.id: u.username for u in all_users}
+    user_map["00000000-0000-0000-0000-000000000000"] = "AI Assistant"
 
-    # Broadcast message to chat room
-    await manager.broadcast_to_chat(payload.chat_id, "receive_message", ws_data, db)
+    msg_dict = build_message_response(message, db, user_map)
+    ws_payload = dict(msg_dict)
+    ws_payload["created_at"] = message.created_at.isoformat()
 
-    # Trigger AI Assistant if message starts with @AI
+    await manager.broadcast_to_chat(payload.chat_id, "receive_message", ws_payload, db)
+
     if payload.content and payload.content.strip().startswith("@AI"):
         background_tasks.add_task(
             process_ai_assistant_query,
@@ -153,7 +187,7 @@ async def send_message(
             current_user.username
         )
 
-    return message
+    return msg_dict
 
 @router.get("", response_model=List[MessageResponse])
 def get_message_history(
@@ -163,9 +197,6 @@ def get_message_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Retrieves message history for a specific chat. Validates membership.
-    """
     membership = db.query(ChatMember).filter(
         ChatMember.chat_id == chat_id,
         ChatMember.user_id == current_user.id
@@ -178,23 +209,104 @@ def get_message_history(
         )
 
     offset = (page - 1) * limit
-    
     messages = db.query(Message).filter(
         Message.chat_id == chat_id
     ).order_by(Message.created_at.desc()).offset(offset).limit(limit).all()
 
-    # Pre-fetch sender usernames to avoid N+1 queries
-    sender_ids = list(set(msg.sender_id for msg in messages))
-    users = db.query(User).filter(User.id.in_(sender_ids)).all()
-    user_map = {user.id: user.username for user in users}
+    all_users = db.query(User).all()
+    user_map = {u.id: u.username for u in all_users}
     user_map["00000000-0000-0000-0000-000000000000"] = "AI Assistant"
 
-    for msg in messages:
-        msg.sender_username = user_map.get(msg.sender_id, "User")
+    result = [build_message_response(m, db, user_map) for m in messages]
+    result.reverse()
+    return result
 
-    # Chat history should be rendered chronologically
-    messages.reverse()
-    return messages
+@router.post("/{message_id}/react")
+async def toggle_message_reaction(
+    message_id: str,
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Toggles an emoji reaction on a message.
+    """
+    emoji = payload.get("emoji")
+    if not emoji:
+        raise HTTPException(status_code=400, detail="Emoji is required")
+
+    message = db.query(Message).filter(Message.id == message_id).first()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    existing = db.query(MessageReaction).filter(
+        MessageReaction.message_id == message_id,
+        MessageReaction.user_id == current_user.id,
+        MessageReaction.emoji == emoji
+    ).first()
+
+    if existing:
+        db.delete(existing)
+        action = "removed"
+    else:
+        new_reaction = MessageReaction(
+            message_id=message_id,
+            user_id=current_user.id,
+            emoji=emoji
+        )
+        db.add(new_reaction)
+        action = "added"
+
+    db.commit()
+
+    all_users = db.query(User).all()
+    user_map = {u.id: u.username for u in all_users}
+    msg_dict = build_message_response(message, db, user_map)
+    msg_dict["created_at"] = message.created_at.isoformat()
+
+    await manager.broadcast_to_chat(
+        message.chat_id,
+        "reaction_update",
+        {
+            "chat_id": message.chat_id,
+            "message_id": message_id,
+            "reactions": msg_dict["reactions"]
+        },
+        db
+    )
+
+    return {"action": action, "reactions": msg_dict["reactions"]}
+
+@router.post("/{message_id}/pin")
+async def toggle_pin_message(
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Pins or unpins a message in the chat.
+    """
+    message = db.query(Message).filter(Message.id == message_id).first()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    message.is_pinned = not message.is_pinned
+    message.pinned_at = datetime.now(timezone.utc) if message.is_pinned else None
+    db.commit()
+
+    await manager.broadcast_to_chat(
+        message.chat_id,
+        "pin_update",
+        {
+            "chat_id": message.chat_id,
+            "message_id": message_id,
+            "is_pinned": message.is_pinned,
+            "pinned_at": message.pinned_at.isoformat() if message.pinned_at else None
+        },
+        db
+    )
+
+    return {"message_id": message_id, "is_pinned": message.is_pinned}
 
 @router.delete("/{message_id}")
 async def delete_message(
@@ -202,21 +314,12 @@ async def delete_message(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Deletes a message. Must be the sender. Broadcasts deletion over WebSockets.
-    """
     message = db.query(Message).filter(Message.id == message_id).first()
     if not message:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Message not found."
-        )
+        raise HTTPException(status_code=404, detail="Message not found.")
 
     if message.sender_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only delete your own messages."
-        )
+        raise HTTPException(status_code=403, detail="You can only delete your own messages.")
 
     chat_id = message.chat_id
     message.message_type = "deleted"
@@ -226,14 +329,10 @@ async def delete_message(
     message.file_size = None
     db.commit()
 
-    # Broadcast message deletion to other users in the chat room
     await manager.broadcast_to_chat(
         chat_id, 
         "message_deleted", 
-        {
-            "message_id": message_id,
-            "chat_id": chat_id
-        }, 
+        {"message_id": message_id, "chat_id": chat_id}, 
         db
     )
 
@@ -245,24 +344,15 @@ async def mark_messages_seen(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Marks all messages in a chat as seen. Broadcasts seen event.
-    """
-    # Verify membership
     membership = db.query(ChatMember).filter(
         ChatMember.chat_id == chat_id,
         ChatMember.user_id == current_user.id
     ).first()
     
     if not membership:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not a member of this chat."
-        )
+        raise HTTPException(status_code=403, detail="You are not a member of this chat.")
 
     now = datetime.now(timezone.utc)
-    
-    # Query unread messages from other users
     unread = db.query(Message).filter(
         Message.chat_id == chat_id,
         Message.sender_id != current_user.id,
@@ -275,7 +365,6 @@ async def mark_messages_seen(
             msg.seen_at = now
         db.commit()
 
-        # Broadcast seen update
         await manager.broadcast_to_chat(
             chat_id,
             "messages_seen",

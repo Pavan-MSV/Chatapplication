@@ -24,6 +24,14 @@ from backend.app.schemas.chat import (
 from backend.app.schemas.message import (
     MessageCreate,
     MessageResponse,
+    MessageReactionResponse,
+    ReplyMessageSummary,
+)
+from backend.app.schemas.poll import (
+    PollCreate,
+    PollVoteCreate,
+    PollOptionResponse,
+    PollResponse,
 )
 from backend.app.schemas.notification import (
     NotificationResponse,
@@ -59,6 +67,12 @@ __all__ = [
     "ChatResponse",
     "MessageCreate",
     "MessageResponse",
+    "MessageReactionResponse",
+    "ReplyMessageSummary",
+    "PollCreate",
+    "PollVoteCreate",
+    "PollOptionResponse",
+    "PollResponse",
     "NotificationResponse",
     "Token",
     "TokenData",

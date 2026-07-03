@@ -8,34 +8,52 @@ import {
   MessageSquare, Users, UserPlus, Bell, LogOut, Send, Paperclip, 
   Mic, Square, Play, Trash2, Moon, Sun, Search, X, Check, CheckCheck,
   Settings, Sparkles, Languages, FileText, CheckCircle, Info, ChevronRight, Camera,
-  ArrowLeft
+  ArrowLeft, Pin, Smile, Reply, Vote, Phone, Video, PhoneOff, MicOff, VideoOff,
+  Folder, Code, MoreVertical
 } from "lucide-react";
 
 import { API_BASE } from "../config/api";
+
+const EMOJI_LIST = ["👍", "❤️", "😂", "🔥", "🎉", "😮", "🚀"];
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
   const { 
     chats, activeChatId, activeChat, messages, friends, pendingRequests, 
     typingMembers, onlineUsers, fetchChats, setActiveChatId, fetchFriends, 
-    fetchPendingRequests, setOnlineStatus, deleteMessageForMe
+    fetchPendingRequests, setOnlineStatus, deleteMessageForMe,
+    replyingTo, setReplyingTo, toggleReaction, togglePinMessage,
+    pinnedMessages, fetchPinnedMessages, mediaGallery, fetchMediaGallery,
+    polls, fetchPolls, createPoll, votePoll, activeCall, setActiveCall
   } = useChatStore();
-  const { notifications, unreadCount, fetchNotifications, markAllAsRead, markAsRead } = useNotificationStore();
-  const { sendTypingStart, sendTypingStop, sendMarkSeen } = useSocket();
 
-  // Dark Mode State
+  const { notifications, unreadCount, fetchNotifications, markAllAsRead, markAsRead } = useNotificationStore();
+  const { sendTypingStart, sendTypingStop, sendMarkSeen, sendWebRTCSignal } = useSocket();
+
+  // Theme State
   const [darkMode, setDarkMode] = useState(true);
 
-  // Delete Modal State
+  // Modal States
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deleteTargetMsg, setDeleteTargetMsg] = useState(null);
 
-  // Search, Profile, Group Modals State
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isGroupOpen, setIsGroupOpen] = useState(false);
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+  const [isMediaGalleryOpen, setIsMediaGalleryOpen] = useState(false);
+
+  // Poll Modal State
+  const [isPollModalOpen, setIsPollModalOpen] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState("");
+  const [pollOptions, setPollOptions] = useState(["", ""]);
+
+  // Code Assistant Modal State
+  const [codeExplainModal, setCodeExplainModal] = useState({ isOpen: false, code: "", explanation: "", loading: false });
+
+  // Reaction Picker Popover Message ID
+  const [activeReactionMsgId, setActiveReactionMsgId] = useState(null);
 
   // Search Logic
   const [searchQuery, setSearchQuery] = useState("");
@@ -53,12 +71,20 @@ export default function Dashboard() {
   const [newStatus, setNewStatus] = useState(user?.status || "online");
   const [newPhoto, setNewPhoto] = useState(user?.profile_photo || "");
 
-  // Translation & AI Suggestions State
+  // AI & Translation State
   const [smartReplies, setSmartReplies] = useState([]);
-  const [translatedMessages, setTranslatedMessages] = useState({}); // messageId -> translatedText
+  const [translatedMessages, setTranslatedMessages] = useState({});
   const [translatingMessageId, setTranslatingMessageId] = useState(null);
+  const [transcriptions, setTranscriptions] = useState({});
   const [chatSummary, setChatSummary] = useState("");
   const [loadingSummary, setLoadingSummary] = useState(false);
+
+  // Audio Playback Speed (msgId -> speed multiplier)
+  const [audioSpeed, setAudioSpeed] = useState({});
+
+  // WebRTC Call Controls State
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
 
   // Message Input State
   const [inputText, setInputText] = useState("");
@@ -101,7 +127,6 @@ export default function Dashboard() {
     }
   }, [darkMode]);
 
-  // Sync profile settings modal state with current user data on open
   useEffect(() => {
     if (isProfileOpen && user) {
       setNewUsername(user.username || "");
@@ -113,8 +138,6 @@ export default function Dashboard() {
   // Scroll to bottom on new message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    
-    // Fetch smart replies whenever active messages list updates
     if (activeChatId && messages.length > 0) {
       fetchSmartReplies(activeChatId);
     } else {
@@ -122,32 +145,25 @@ export default function Dashboard() {
     }
   }, [messages, activeChatId]);
 
-  // Handle typing input triggers
   const handleInputChange = (e) => {
     setInputText(e.target.value);
     
     if (activeChatId) {
       sendTypingStart(activeChatId);
-      
-      if (typingTimeoutRef) {
-        clearTimeout(typingTimeoutRef);
-      }
+      if (typingTimeoutRef) clearTimeout(typingTimeoutRef);
       
       const timeout = setTimeout(() => {
         sendTypingStop(activeChatId);
       }, 2000);
-      
       setTypingTimeoutRef(timeout);
     }
   };
 
-  // Handle secure file download (converts base64 data URLs to blobs to respect original filename/extension)
   const handleDownloadFile = async (fileUrl, fileName) => {
     if (!fileUrl) return;
     try {
       let blob;
       if (fileUrl.startsWith("data:")) {
-        // Parse base64 data URL client-side to bypass browser fetch() scheme security constraints
         const parts = fileUrl.split(",");
         const mimeString = parts[0].split(":")[1].split(";")[0];
         const byteString = atob(parts[1]);
@@ -169,7 +185,6 @@ export default function Dashboard() {
       document.body.appendChild(a);
       a.click();
       
-      // Delay cleanup to allow browser download manager to resolve the blob URL
       setTimeout(() => {
         document.body.removeChild(a);
         URL.revokeObjectURL(blobUrl);
@@ -180,7 +195,6 @@ export default function Dashboard() {
     }
   };
 
-  // Handle local profile photo upload to base64
   const handleProfilePhotoUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -197,7 +211,6 @@ export default function Dashboard() {
     };
   };
 
-  // Send text message
   const handleSendMessage = async (textToSend = null) => {
     const content = textToSend || inputText;
     if (!content.trim() && !audioBlob) return;
@@ -208,17 +221,18 @@ export default function Dashboard() {
       const payload = {
         chat_id: activeChatId,
         content: content.trim(),
-        message_type: "text"
+        message_type: "text",
+        reply_to_id: replyingTo ? replyingTo.id : null
       };
 
       await axios.post(`${API_BASE}/messages`, payload, { headers: getHeaders() });
       if (!textToSend) setInputText("");
+      setReplyingTo(null);
     } catch (err) {
       console.error("Failed to send message:", err);
     }
   };
 
-  // Fetch AI smart replies
   const fetchSmartReplies = async (chatId) => {
     try {
       const res = await axios.get(`${API_BASE}/ai/suggestions?chat_id=${chatId}`, { headers: getHeaders() });
@@ -228,7 +242,6 @@ export default function Dashboard() {
     }
   };
 
-  // Translate specific message
   const handleTranslateMessage = async (msgId, text, targetLang) => {
     setTranslatingMessageId(msgId);
     try {
@@ -248,7 +261,29 @@ export default function Dashboard() {
     }
   };
 
-  // Fetch AI Chat Summary
+  const handleTranscribeVoice = async (msgId) => {
+    try {
+      const res = await axios.post(`${API_BASE}/ai/transcribe?message_id=${msgId}`, {}, { headers: getHeaders() });
+      setTranscriptions(prev => ({
+        ...prev,
+        [msgId]: res.data.transcription
+      }));
+    } catch (err) {
+      console.error("Voice transcription failed:", err);
+    }
+  };
+
+  const handleExplainCode = async (codeSnippet) => {
+    setCodeExplainModal({ isOpen: true, code: codeSnippet, explanation: "", loading: true });
+    try {
+      const res = await axios.post(`${API_BASE}/ai/code-explain`, { code: codeSnippet }, { headers: getHeaders() });
+      setCodeExplainModal({ isOpen: true, code: codeSnippet, explanation: res.data.explanation, loading: false });
+    } catch (err) {
+      console.error("Code explain failed:", err);
+      setCodeExplainModal({ isOpen: true, code: codeSnippet, explanation: "Failed to analyze code snippet.", loading: false });
+    }
+  };
+
   const handleGetChatSummary = async () => {
     if (!activeChatId) return;
     setLoadingSummary(true);
@@ -264,11 +299,9 @@ export default function Dashboard() {
     }
   };
 
-  // Search Logic
   const handleSearchUsers = async (e) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
-    
     try {
       const res = await axios.get(`${API_BASE}/users/search?q=${searchQuery}&page=${searchPage}`, {
         headers: getHeaders()
@@ -280,11 +313,9 @@ export default function Dashboard() {
     }
   };
 
-  // Send Friend Request
   const handleSendRequest = async (username) => {
     try {
       await axios.post(`${API_BASE}/friends/request`, { receiver_username_or_email: username }, { headers: getHeaders() });
-      // Re-trigger query
       const res = await axios.get(`${API_BASE}/users/search?q=${searchQuery}&page=${searchPage}`, { headers: getHeaders() });
       setSearchResults(res.data);
     } catch (err) {
@@ -292,7 +323,6 @@ export default function Dashboard() {
     }
   };
 
-  // Accept/Reject request
   const handleFriendResponse = async (requestId, action) => {
     try {
       await axios.post(`${API_BASE}/friends/respond`, { request_id: requestId, action }, { headers: getHeaders() });
@@ -305,7 +335,6 @@ export default function Dashboard() {
     }
   };
 
-  // Delete message handlers
   const initiateDeleteMessage = (msg) => {
     setDeleteTargetMsg(msg);
     setIsDeleteModalOpen(true);
@@ -331,7 +360,6 @@ export default function Dashboard() {
     }
   };
 
-  // Update profile setting
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     try {
@@ -340,8 +368,6 @@ export default function Dashboard() {
         profile_photo: newPhoto,
         status: newStatus
       }, { headers: getHeaders() });
-      
-      // Update local storage / auth state
       setIsProfileOpen(false);
       window.location.reload();
     } catch (err) {
@@ -349,7 +375,6 @@ export default function Dashboard() {
     }
   };
 
-  // Create Group Chat
   const handleCreateGroup = async (e) => {
     e.preventDefault();
     if (!groupName.trim() || selectedGroupMembers.length === 0) return;
@@ -372,21 +397,29 @@ export default function Dashboard() {
     }
   };
 
-  // File Upload Handlers
+  const handleCreatePollSubmit = async (e) => {
+    e.preventDefault();
+    const cleanOptions = pollOptions.map(o => o.trim()).filter(Boolean);
+    if (!pollQuestion.trim() || cleanOptions.length < 2) {
+      alert("Please provide a question and at least 2 valid options.");
+      return;
+    }
+    await createPoll(activeChatId, pollQuestion.trim(), cleanOptions);
+    setIsPollModalOpen(false);
+    setPollQuestion("");
+    setPollOptions(["", ""]);
+  };
+
   const handleFileSelect = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setUploadingFile(true);
     try {
-      // In production, we upload directly to Firebase Storage using the Client SDK
-      // For this portfolio code base, we mock file upload mapping by converting to base64
-      // or creating an ObjectURL, or using placeholder file URLs so that they are instantly playable.
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onloadend = async () => {
-        const fileUrl = reader.result; // Data URL acts as mock Firebase Storage URL
-        
+        const fileUrl = reader.result;
         const payload = {
           chat_id: activeChatId,
           content: null,
@@ -405,7 +438,6 @@ export default function Dashboard() {
     }
   };
 
-  // Voice recording triggers
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -418,12 +450,10 @@ export default function Dashboard() {
         const blob = new Blob(chunks, { type: "audio/ogg; codecs=opus" });
         setAudioBlob(blob);
         
-        // Convert to dataURL to mock file upload
         const reader = new FileReader();
         reader.readAsDataURL(blob);
         reader.onloadend = async () => {
           const fileUrl = reader.result;
-          
           const payload = {
             chat_id: activeChatId,
             content: null,
@@ -448,6 +478,7 @@ export default function Dashboard() {
       
     } catch (err) {
       console.error("Audio recording failed:", err);
+      alert("Could not access microphone.");
     }
   };
 
@@ -459,47 +490,62 @@ export default function Dashboard() {
     }
   };
 
-  const cancelRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      setAudioBlob(null);
-      clearInterval(timerRef.current);
+  // WebRTC Call Triggers
+  const startCall = (callType = "video") => {
+    if (!activeChat) return;
+    const targetMember = activeChat.members.find(m => m.user.id !== user?.id);
+    sendWebRTCSignal({
+      target_user_id: targetMember ? targetMember.user.id : null,
+      chat_id: activeChatId,
+      signal_type: "call_request",
+      call_type: callType
+    });
+    setActiveCall({
+      isIncoming: false,
+      callerName: activeChat.name,
+      callerId: user?.id,
+      chatId: activeChatId,
+      callType: callType
+    });
+  };
+
+  const endCall = () => {
+    if (activeChatId) {
+      sendWebRTCSignal({
+        chat_id: activeChatId,
+        signal_type: "end_call"
+      });
     }
+    setActiveCall(null);
   };
 
-  const formatDuration = (sec) => {
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-  };
-
-  // Compute typing list string
-  const getTypingString = () => {
-    if (!activeChatId || !typingMembers[activeChatId]) return "";
-    const users = Object.values(typingMembers[activeChatId]);
-    if (users.length === 0) return "";
-    if (users.length === 1) return `@${users[0]} is typing...`;
-    return `${users.map(u => `@${u}`).join(", ")} are typing...`;
+  const toggleAudioSpeed = (msgId) => {
+    setAudioSpeed(prev => {
+      const current = prev[msgId] || 1;
+      const next = current === 1 ? 1.5 : (current === 1.5 ? 2 : 1);
+      return { ...prev, [msgId]: next };
+    });
   };
 
   return (
-    <div className={`h-screen w-full flex overflow-hidden font-sans ${darkMode ? "dark bg-slate-950" : "bg-slate-50"}`}>
+    <div className="flex h-screen w-full overflow-hidden bg-slate-900 font-sans text-slate-100 antialiased">
       
-      {/* 1. SIDEBAR / CHATS PANEL */}
-      <div className={`w-full md:w-80 h-full flex flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 ${activeChatId ? "hidden md:flex" : "flex"}`}>
+      {/* 1. LEFT SIDEBAR PANEL */}
+      <div className={`w-full md:w-80 lg:w-96 flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 ${activeChatId ? "hidden md:flex" : "flex"}`}>
         
         {/* Sidebar Header */}
-        <div className="p-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-tr from-brand-600 to-brand-500 rounded-xl flex items-center justify-center text-white shadow shadow-brand-500/20">
-              <MessageSquare className="w-4.5 h-4.5" />
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center text-white font-bold shadow-md shadow-brand-500/20 font-display">
+              CS
             </div>
-            <span className="font-bold text-sm text-slate-800 dark:text-white font-display tracking-tight">ChatSphere AI</span>
+            <div>
+              <h1 className="font-bold text-slate-900 dark:text-white text-base tracking-tight font-display">ChatSphere AI</h1>
+              <p className="text-xxs text-slate-400 font-medium">Real-Time Workspace</p>
+            </div>
           </div>
           
           <div className="flex items-center gap-0.5">
-            {/* Search icon */}
             <button 
               onClick={() => setIsSearchOpen(true)}
               className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
@@ -508,7 +554,6 @@ export default function Dashboard() {
               <Search className="w-4 h-4" />
             </button>
             
-            {/* Create Group icon */}
             <button 
               onClick={() => setIsGroupOpen(true)}
               className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
@@ -517,7 +562,6 @@ export default function Dashboard() {
               <Users className="w-4 h-4" />
             </button>
 
-            {/* Notification Bell */}
             <button 
               onClick={() => setIsNotificationsOpen(true)}
               className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 relative transition-colors"
@@ -544,7 +588,6 @@ export default function Dashboard() {
           ) : (
             chats.map((chat) => {
               const isActive = chat.id === activeChatId;
-              // Check if anyone in chat is typing
               const isTyping = typingMembers[chat.id] && Object.keys(typingMembers[chat.id]).length > 0;
               
               return (
@@ -565,7 +608,6 @@ export default function Dashboard() {
                     />
                     {!chat.is_group && (
                       <span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${
-                        // Dynamically look up the online state from the onlineUsers map
                         (onlineUsers[chat.members.find(m => m.user.id !== user?.id)?.user.id] === "online")
                           ? "bg-brand-500" 
                           : "bg-slate-400"
@@ -605,7 +647,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Sidebar Footer / User Profile */}
+        {/* Sidebar Footer */}
         <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
             <img 
@@ -623,7 +665,6 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex items-center gap-0.5">
-            {/* Theme Toggle */}
             <button 
               onClick={() => setDarkMode(!darkMode)}
               className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
@@ -631,7 +672,6 @@ export default function Dashboard() {
             >
               {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
             </button>
-            {/* Log out */}
             <button 
               onClick={logout}
               className="p-1.5 hover:bg-red-100 dark:hover:bg-red-950/30 rounded-lg text-red-500 transition-colors"
@@ -647,7 +687,7 @@ export default function Dashboard() {
       <div className={`flex-1 h-full flex flex-col bg-slate-100 dark:bg-slate-950 ${activeChatId ? "flex" : "hidden md:flex"}`}>
         {activeChat ? (
           <>
-            {/* Chat Room Header */}
+            {/* Chat Header */}
             <div className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 md:px-6 flex items-center justify-between shrink-0 shadow-sm z-10">
               <div className="flex items-center gap-2 md:gap-3 min-w-0">
                 <button
@@ -675,7 +715,34 @@ export default function Dashboard() {
               </div>
               
               <div className="flex items-center gap-2">
-                {/* AI Chat Summary icon */}
+                {/* Voice Call */}
+                <button
+                  onClick={() => startCall("voice")}
+                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition-colors"
+                  title="Start Voice Call"
+                >
+                  <Phone className="w-4 h-4" />
+                </button>
+                {/* Video Call */}
+                <button
+                  onClick={() => startCall("video")}
+                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition-colors"
+                  title="Start Video Call"
+                >
+                  <Video className="w-4 h-4" />
+                </button>
+                {/* Media Gallery */}
+                <button
+                  onClick={() => {
+                    fetchMediaGallery(activeChatId);
+                    setIsMediaGalleryOpen(true);
+                  }}
+                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition-colors"
+                  title="Shared Media & Files"
+                >
+                  <Folder className="w-4 h-4" />
+                </button>
+                {/* AI Chat Summary button */}
                 <button
                   onClick={handleGetChatSummary}
                   className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/60 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-sm"
@@ -687,8 +754,20 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {/* Pinned Messages Banner */}
+            {pinnedMessages.length > 0 && (
+              <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-1.5 flex items-center justify-between text-xs text-amber-700 dark:text-amber-400">
+                <div className="flex items-center gap-2 truncate">
+                  <Pin className="w-3.5 h-3.5 shrink-0" />
+                  <span className="font-semibold">Pinned:</span>
+                  <span className="truncate">{pinnedMessages[0].content}</span>
+                </div>
+                <span className="text-xxs font-semibold opacity-75">{pinnedMessages.length} pinned</span>
+              </div>
+            )}
+
             {/* Messages List Area */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
               {messages.length === 0 ? (
                 <div className="h-full w-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500">
                   <MessageSquare className="w-12 h-12 mb-3 opacity-20 text-brand-500 animate-pulse" />
@@ -705,23 +784,78 @@ export default function Dashboard() {
                       key={msg.id}
                       className={`flex flex-col group ${isMe ? "items-end" : "items-start"}`}
                     >
-                      {/* Sender details */}
                       <span className="text-xxs font-semibold text-slate-400 dark:text-slate-500 mb-1 px-1 tracking-wider uppercase">
                         {isAI ? "🤖 AI Assistant" : (isMe ? "You" : `@${msg.sender_username || "User"}`)}
                       </span>
 
-                      {/* Message Bubble Card */}
-                      <div className="flex items-center gap-2 max-w-lg">
+                      <div className="flex items-center gap-2 max-w-lg relative">
                         
-                        {/* Hover delete icon for user's own messages on the left */}
-                        {isMe && msg.message_type !== "deleted" && (
-                          <button
-                            onClick={() => initiateDeleteMessage(msg)}
-                            className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-950/30 text-red-500 rounded-lg transition-all cursor-pointer shrink-0"
-                            title="Delete message"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                        {/* Hover Action Toolbar */}
+                        {msg.message_type !== "deleted" && (
+                          <div className={`absolute top-0 -translate-y-full flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-1 shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-20 ${isMe ? "right-0" : "left-0"}`}>
+                            {/* Reaction button */}
+                            <button
+                              onClick={() => setActiveReactionMsgId(activeReactionMsgId === msg.id ? null : msg.id)}
+                              className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-300"
+                              title="React"
+                            >
+                              <Smile className="w-3.5 h-3.5" />
+                            </button>
+                            {/* Reply button */}
+                            <button
+                              onClick={() => setReplyingTo(msg)}
+                              className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-300"
+                              title="Reply"
+                            >
+                              <Reply className="w-3.5 h-3.5" />
+                            </button>
+                            {/* Pin button */}
+                            <button
+                              onClick={() => togglePinMessage(msg.id)}
+                              className={`p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded ${msg.is_pinned ? "text-amber-500" : "text-slate-500 dark:text-slate-300"}`}
+                              title={msg.is_pinned ? "Unpin" : "Pin"}
+                            >
+                              <Pin className="w-3.5 h-3.5" />
+                            </button>
+                            {/* Code Explain if code in content */}
+                            {msg.content && (msg.content.includes("def ") || msg.content.includes("function") || msg.content.includes("import ") || msg.content.includes("const ")) && (
+                              <button
+                                onClick={() => handleExplainCode(msg.content)}
+                                className="p-1 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-indigo-500 rounded"
+                                title="Explain Code with AI"
+                              >
+                                <Code className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {/* Delete button */}
+                            {isMe && (
+                              <button
+                                onClick={() => initiateDeleteMessage(msg)}
+                                className="p-1 hover:bg-red-100 dark:hover:bg-red-950 text-red-500 rounded"
+                                title="Delete"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Reaction Emoji Popover */}
+                        {activeReactionMsgId === msg.id && (
+                          <div className={`absolute -top-10 flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full px-2 py-1 shadow-lg z-30 ${isMe ? "right-0" : "left-0"}`}>
+                            {EMOJI_LIST.map((emoji) => (
+                              <button
+                                key={emoji}
+                                onClick={() => {
+                                  toggleReaction(msg.id, emoji);
+                                  setActiveReactionMsgId(null);
+                                }}
+                                className="hover:scale-125 transition-transform text-base p-0.5"
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
                         )}
 
                         <div className={`p-4 rounded-2xl shadow-sm text-sm border relative ${
@@ -734,7 +868,15 @@ export default function Dashboard() {
                                     : "bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border-slate-200 dark:border-slate-800"))
                         }`}>
                           
-                          {/* Message Content rendering based on type */}
+                          {/* Render Quoted Parent Message if replying */}
+                          {msg.reply_to && (
+                            <div className="mb-2 p-2 rounded-lg bg-black/10 dark:bg-white/10 border-l-2 border-brand-400 text-xs">
+                              <span className="font-semibold text-xxs block opacity-75">@{msg.reply_to.sender_username}</span>
+                              <p className="truncate opacity-90">{msg.reply_to.content || `[${msg.reply_to.message_type}]`}</p>
+                            </div>
+                          )}
+
+                          {/* Message Content */}
                           {msg.message_type === "deleted" ? (
                             <div className="flex items-center gap-2 text-slate-400 dark:text-slate-500 italic py-0.5">
                               <Trash2 className="w-3.5 h-3.5 opacity-55 shrink-0" />
@@ -742,7 +884,6 @@ export default function Dashboard() {
                             </div>
                           ) : (
                             <>
-                              {/* File Attachment Bubble */}
                               {msg.message_type === "image" && (
                                 <div className="mb-2 max-w-xs overflow-hidden rounded-lg border border-black/10">
                                   <img src={msg.file_url} alt="Shared" className="w-full h-auto object-cover max-h-60" />
@@ -764,14 +905,80 @@ export default function Dashboard() {
 
                               {/* Voice Message Bubble */}
                               {msg.message_type === "voice" && (
-                                <div className="flex items-center gap-3 py-1 mb-2 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800/80">
-                                  <Mic className="w-5 h-5 text-brand-500 shrink-0" />
-                                  <audio src={msg.file_url} controls className="w-48 h-8 rounded-lg outline-none" />
+                                <div className="flex flex-col gap-2 py-1 mb-2 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800/80">
+                                  <div className="flex items-center gap-3">
+                                    <Mic className="w-5 h-5 text-brand-500 shrink-0" />
+                                    <audio 
+                                      src={msg.file_url} 
+                                      controls 
+                                      className="w-48 h-8 rounded-lg outline-none"
+                                      playbackRate={audioSpeed[msg.id] || 1}
+                                    />
+                                    <button
+                                      onClick={() => toggleAudioSpeed(msg.id)}
+                                      className="px-2 py-1 bg-brand-500/20 text-brand-500 font-bold text-xxs rounded hover:bg-brand-500/30"
+                                    >
+                                      {audioSpeed[msg.id] || 1}x
+                                    </button>
+                                  </div>
+
+                                  {/* AI Transcribe Button */}
+                                  <button
+                                    onClick={() => handleTranscribeVoice(msg.id)}
+                                    className="text-xxs text-indigo-500 font-semibold flex items-center gap-1 hover:underline self-start"
+                                  >
+                                    <Sparkles className="w-3 h-3" />
+                                    <span>AI Transcribe</span>
+                                  </button>
+
+                                  {transcriptions[msg.id] && (
+                                    <p className="text-xs italic text-slate-600 dark:text-slate-300 pt-1 border-t border-slate-200 dark:border-slate-800">
+                                      "{transcriptions[msg.id]}"
+                                    </p>
+                                  )}
                                 </div>
                               )}
 
-                              {/* Text Message Content */}
-                              {msg.content && (
+                              {/* Poll Message Bubble */}
+                              {msg.message_type === "poll" && (
+                                <div className="p-3 bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800/80 w-64 md:w-80">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <Vote className="w-4 h-4 text-brand-500" />
+                                    <span className="font-bold text-xs text-slate-800 dark:text-slate-100">Poll</span>
+                                  </div>
+                                  <p className="font-semibold text-sm mb-3">{msg.content?.replace("📊 Poll: ", "")}</p>
+                                  
+                                  {/* Render Poll Options */}
+                                  {polls.find(p => p.message_id === msg.id)?.options.map((opt) => {
+                                    const poll = polls.find(p => p.message_id === msg.id);
+                                    const percent = poll?.total_votes ? Math.round((opt.vote_count / poll.total_votes) * 100) : 0;
+
+                                    return (
+                                      <button
+                                        key={opt.id}
+                                        onClick={() => votePoll(activeChatId, poll.id, opt.id)}
+                                        className={`w-full text-left p-2.5 rounded-lg border mb-2 relative overflow-hidden transition-all text-xs font-medium ${
+                                          opt.voted_by_me 
+                                            ? "border-brand-500 bg-brand-500/10 text-brand-600 dark:text-brand-400" 
+                                            : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200"
+                                        }`}
+                                      >
+                                        <div 
+                                          className="absolute top-0 left-0 bottom-0 bg-brand-500/20 z-0 transition-all duration-500" 
+                                          style={{ width: `${percent}%` }}
+                                        />
+                                        <div className="relative z-10 flex items-center justify-between">
+                                          <span>{opt.option_text}</span>
+                                          <span className="text-xxs font-bold opacity-80">{opt.vote_count} ({percent}%)</span>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Standard Text Message Content */}
+                              {msg.message_type !== "poll" && msg.content && (
                                 <p className="leading-relaxed break-words whitespace-pre-wrap">
                                   {translatedMessages[msg.id] || msg.content}
                                 </p>
@@ -779,10 +986,26 @@ export default function Dashboard() {
                             </>
                           )}
 
-                          {/* Render Translation note if overlay active */}
                           {translatedMessages[msg.id] && msg.message_type !== "deleted" && (
                             <div className="text-xxs mt-2 pt-1 border-t border-white/20 dark:border-slate-800 text-slate-300 dark:text-slate-400 italic">
                               Translated from original content.
+                            </div>
+                          )}
+
+                          {/* Reaction Pills Badges */}
+                          {msg.reactions && msg.reactions.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2 pt-1">
+                              {Object.entries(
+                                msg.reactions.reduce((acc, r) => {
+                                  acc[r.emoji] = (acc[r.emoji] || 0) + 1;
+                                  return acc;
+                                }, {})
+                              ).map(([emoji, count]) => (
+                                <span key={emoji} className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xxs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1 shadow-2xs">
+                                  <span>{emoji}</span>
+                                  <span>{count}</span>
+                                </span>
+                              ))}
                             </div>
                           )}
 
@@ -800,52 +1023,6 @@ export default function Dashboard() {
                             )}
                           </div>
                         </div>
-
-                        {/* Translation options popover for other's messages */}
-                        {!isMe && !isAI && (
-                          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-1 shadow-md transition-all">
-                            <button
-                              onClick={() => handleTranslateMessage(msg.id, msg.content, "te")}
-                              disabled={translatingMessageId === msg.id}
-                              className="px-1.5 py-1 text-xxs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded font-semibold transition-colors"
-                              title="Translate to Telugu"
-                            >
-                              TEL
-                            </button>
-                            <button
-                              onClick={() => handleTranslateMessage(msg.id, msg.content, "hi")}
-                              disabled={translatingMessageId === msg.id}
-                              className="px-1.5 py-1 text-xxs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded font-semibold transition-colors"
-                              title="Translate to Hindi"
-                            >
-                              HIN
-                            </button>
-                            {translatedMessages[msg.id] && (
-                              <button
-                                onClick={() => {
-                                  const updated = { ...translatedMessages };
-                                  delete updated[msg.id];
-                                  setTranslatedMessages(updated);
-                                }}
-                                className="px-1 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 rounded transition-colors"
-                                title="Reset Translation"
-                              >
-                                <X className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Hover delete icon for other users' messages on the right */}
-                        {!isMe && msg.message_type !== "deleted" && (
-                          <button
-                            onClick={() => initiateDeleteMessage(msg)}
-                            className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-400 hover:text-red-500 rounded-lg transition-all cursor-pointer shrink-0"
-                            title="Delete message"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
                       </div>
                     </div>
                   );
@@ -854,268 +1031,432 @@ export default function Dashboard() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Live Typing Status Bar */}
-            {getTypingString() && (
-              <div className="px-6 py-1 text-xs text-brand-500 font-medium bg-slate-50 dark:bg-slate-900/30 border-t border-slate-200/55 dark:border-slate-800/40 italic">
-                {getTypingString()}
+            {/* Replying Banner Header above input */}
+            {replyingTo && (
+              <div className="px-4 py-2 bg-brand-500/10 border-t border-brand-500/20 flex items-center justify-between text-xs text-slate-700 dark:text-slate-200">
+                <div className="flex items-center gap-2 truncate">
+                  <Reply className="w-3.5 h-3.5 text-brand-500 shrink-0" />
+                  <span className="font-bold text-brand-600 dark:text-brand-400">Replying to @{replyingTo.sender_username}:</span>
+                  <span className="truncate opacity-80">{replyingTo.content || `[${replyingTo.message_type}]`}</span>
+                </div>
+                <button onClick={() => setReplyingTo(null)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded">
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
             )}
 
-            {/* Dynamic AI Smart Reply Suggester row */}
+            {/* AI Smart Replies Suggestion Chips */}
             {smartReplies.length > 0 && (
-              <div className="px-6 py-2.5 flex items-center gap-2 overflow-x-auto bg-slate-50 dark:bg-slate-900/30 border-t border-slate-250/60 dark:border-slate-850/50">
-                <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0 animate-pulse" />
-                <span className="text-xxs font-bold text-indigo-400 uppercase tracking-wider shrink-0 mr-1.5">Smart Replies:</span>
-                {smartReplies.map((reply, idx) => (
+              <div className="px-4 py-2 bg-slate-50 dark:bg-slate-900/60 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 overflow-x-auto">
+                <Sparkles className="w-3.5 h-3.5 text-brand-500 shrink-0" />
+                <span className="text-xxs font-bold text-slate-400 uppercase tracking-wider shrink-0">Smart Replies:</span>
+                {smartReplies.map((suggestion, idx) => (
                   <button
                     key={idx}
-                    onClick={() => handleSendMessage(reply)}
-                    className="px-3 py-1.5 text-xs bg-white dark:bg-slate-900 hover:bg-brand-500 dark:hover:bg-brand-500 text-slate-700 dark:text-slate-300 hover:text-white dark:hover:text-white border border-slate-200 dark:border-slate-800 hover:border-brand-500 dark:hover:border-brand-500 rounded-full shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all whitespace-nowrap"
+                    onClick={() => handleSendMessage(suggestion)}
+                    className="px-3 py-1 bg-white dark:bg-slate-800 hover:bg-brand-500 hover:text-white border border-slate-200 dark:border-slate-700 rounded-full text-xs text-slate-700 dark:text-slate-200 font-medium transition-all shrink-0 shadow-2xs"
                   >
-                    {reply}
+                    {suggestion}
                   </button>
                 ))}
               </div>
             )}
 
-            {/* Chat Input Dock Area */}
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3 shrink-0">
-              {/* Attachment selector */}
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadingFile}
-                className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 rounded-xl transition-colors shrink-0"
-                title="Share image or file"
-              >
-                {uploadingFile ? (
-                  <span className="w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin block"></span>
-                ) : (
-                  <Paperclip className="w-5 h-5" />
-                )}
-              </button>
+            {/* Message Input Box */}
+            <div className="p-3 md:p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 shrink-0">
               <input 
                 type="file" 
                 ref={fileInputRef} 
                 onChange={handleFileSelect} 
                 className="hidden" 
-                accept="image/*,application/pdf,.doc,.docx,.zip" 
               />
 
-              {/* Main text box */}
-              <input
-                type="text"
-                className="flex-1 bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500/50"
-                placeholder="Type a message... (Prefix with '@AI' to query assistant)"
-                value={inputText}
-                onChange={handleInputChange}
-                onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-                disabled={isRecording}
-              />
+              {/* Attachment Button */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingFile}
+                className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl transition-colors shrink-0"
+                title="Attach image or file"
+              >
+                <Paperclip className="w-5 h-5" />
+              </button>
 
-              {/* Voice Message Recorder Panel */}
-              <div className="flex items-center gap-1">
-                {isRecording ? (
-                  <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 px-3 py-1.5 rounded-xl">
-                    <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-ping"></span>
-                    <span className="text-xs text-red-600 dark:text-red-400 font-semibold">{formatDuration(recordingDuration)}</span>
-                    
-                    <button 
-                      onClick={stopRecording} 
-                      className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 rounded"
-                      title="Send Voice Note"
-                    >
-                      <Square className="w-4 h-4 fill-current" />
-                    </button>
-                    <button 
-                      onClick={cancelRecording} 
-                      className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 rounded"
-                      title="Cancel Recording"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+              {/* Create Poll Button */}
+              <button
+                onClick={() => setIsPollModalOpen(true)}
+                className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl transition-colors shrink-0"
+                title="Create In-Chat Poll"
+              >
+                <Vote className="w-5 h-5" />
+              </button>
+
+              {/* Voice Recording Control */}
+              {isRecording ? (
+                <div className="flex-1 flex items-center justify-between bg-red-500/10 px-4 py-2 rounded-xl border border-red-500/30">
+                  <div className="flex items-center gap-2 text-red-500 text-xs font-semibold animate-pulse">
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+                    <span>Recording Voice Note ({recordingDuration}s)</span>
                   </div>
-                ) : (
+                  <button
+                    onClick={stopRecording}
+                    className="p-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                  >
+                    <Square className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    value={inputText}
+                    onChange={handleInputChange}
+                    onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
+                    placeholder="Type a message (or type @AI for assistant)..."
+                    className="flex-1 bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:border-brand-500 text-sm font-medium"
+                  />
+
                   <button
                     onClick={startRecording}
-                    className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 rounded-xl transition-colors shrink-0"
-                    title="Record voice message"
+                    className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl transition-colors shrink-0"
+                    title="Record voice note"
                   >
                     <Mic className="w-5 h-5" />
                   </button>
-                )}
 
-                {/* Send Button */}
-                <button
-                  onClick={() => handleSendMessage()}
-                  disabled={!inputText.trim()}
-                  className="p-3 bg-brand-500 text-white rounded-xl shadow-md hover:bg-brand-400 disabled:opacity-50 disabled:pointer-events-none transition-all hover:scale-105 shrink-0"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
+                  <button
+                    onClick={() => handleSendMessage()}
+                    disabled={!inputText.trim()}
+                    className="p-2.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white rounded-xl shadow-md shadow-brand-500/20 transition-all shrink-0 cursor-pointer"
+                  >
+                    <Send className="w-5 h-5" />
+                  </button>
+                </>
+              )}
             </div>
           </>
         ) : (
-          <div className="flex-1 w-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-6 text-center">
-            <div className="w-20 h-20 bg-gradient-to-tr from-brand-500 to-indigo-500 rounded-3xl flex items-center justify-center text-white mb-6 shadow-xl animate-pulse">
-              <MessageSquare className="w-10 h-10" />
+          /* Empty Chat Splash */
+          <div className="h-full w-full flex flex-col items-center justify-center text-center p-8 text-slate-400 dark:text-slate-500">
+            <div className="w-16 h-16 rounded-3xl bg-brand-500/10 flex items-center justify-center text-brand-500 mb-4 shadow-inner">
+              <MessageSquare className="w-8 h-8" />
             </div>
-            <h3 className="text-2xl font-bold text-slate-800 dark:text-white font-display">Welcome to ChatSphere AI</h3>
-            <p className="text-sm mt-2 max-w-sm leading-relaxed">
-              Select an active conversation from the sidebar or click the search icon to query profiles, send friend requests, and start exchanging messages.
-            </p>
-            <div className="mt-8 flex items-center gap-4 text-xs font-semibold text-slate-400">
-              <span className="flex items-center gap-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-3 py-1.5 rounded-lg">
-                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                Gemini API Enabled
-              </span>
-              <span className="flex items-center gap-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-3 py-1.5 rounded-lg">
-                <CheckCircle className="w-3.5 h-3.5 text-brand-500" />
-                WebSockets Connected
-              </span>
-            </div>
+            <h3 className="font-bold text-lg text-slate-700 dark:text-slate-200 font-display">Select a conversation to start chatting</h3>
+            <p className="text-xs max-w-sm mt-1">Choose an existing friend from your left sidebar or search for users to establish new chat connections.</p>
           </div>
         )}
       </div>
 
-      {/* 3. MODALS AND SLIDE-OVER DRAWER OVERLAYS */}
+      {/* 3. MODALS & DRAWERS */}
 
-      {/* Search Drawer Modal */}
-      {isSearchOpen && (
-        <div className="fixed inset-0 z-50 flex justify-start bg-slate-950/40 backdrop-blur-sm transition-all animate-fadeIn">
-          <div className="w-80 h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-850 p-6 flex flex-col justify-between shadow-2xl relative">
-            <div>
-              <div className="flex items-center justify-between mb-6">
-                <h4 className="text-lg font-bold text-slate-800 dark:text-white font-display flex items-center gap-2">
-                  <UserPlus className="w-5 h-5 text-brand-500" />
-                  Find Contacts
-                </h4>
-                <button onClick={() => { setIsSearchOpen(false); setSearchResults([]); setSearchQuery(""); setHasSearched(false); }} className="p-1.5 hover:bg-slate-150 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-650 dark:hover:text-slate-200 rounded-lg">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Search Form */}
-              <form onSubmit={handleSearchUsers} className="relative mb-6">
-                <input
-                  type="text"
-                  className="w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500/50"
-                  placeholder="Username or email... (e.g. @pavan)"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
-              </form>
-
-              {/* Search Result Items */}
-              <div className="space-y-3 overflow-y-auto max-h-[calc(100vh-180px)] pr-1">
-                {!hasSearched ? (
-                  <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-6 italic">Enter keyword and hit search to find contacts.</p>
-                ) : searchResults.length === 0 ? (
-                  <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-6 italic">No users found.</p>
-                ) : (
-                  searchResults.map((userItem) => (
-                    <div key={userItem.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-855 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={userItem.profile_photo || `https://api.dicebear.com/7.x/adventurer/svg?seed=${userItem.username}`}
-                          alt="Avatar"
-                          className="w-9 h-9 rounded-full"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold truncate text-slate-900 dark:text-white">@{userItem.username}</p>
-                          <p className="text-xxs text-slate-400 truncate max-w-[120px]">{userItem.email}</p>
-                        </div>
+      {/* Shared Media Gallery Drawer */}
+      {isMediaGalleryOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex justify-end">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 h-full p-6 flex flex-col shadow-2xl overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4 mb-4">
+              <h3 className="font-bold text-lg text-slate-800 dark:text-white flex items-center gap-2">
+                <Folder className="w-5 h-5 text-brand-500" />
+                Shared Media & Files
+              </h3>
+              <button onClick={() => setIsMediaGalleryOpen(false)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+            
+            <div className="space-y-3 flex-1 overflow-y-auto">
+              {mediaGallery.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-8">No shared files or media in this chat yet.</p>
+              ) : (
+                mediaGallery.map((item) => (
+                  <div key={item.id} className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <FileText className="w-6 h-6 text-brand-500 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold truncate text-slate-800 dark:text-slate-200">{item.file_name || item.message_type}</p>
+                        <p className="text-xxs text-slate-400">By @{item.sender_username}</p>
                       </div>
-
-                      {/* Friend request buttons */}
-                      {userItem.friendship_status === null && (
-                        <button
-                          onClick={() => handleSendRequest(userItem.username)}
-                          className="px-2.5 py-1 bg-brand-500 text-white rounded-md text-xxs font-bold hover:bg-brand-400"
-                        >
-                          Add
-                        </button>
-                      )}
-                      {userItem.friendship_status === "sent_pending" && (
-                        <span className="text-xxs text-slate-450 dark:text-slate-500 font-semibold italic bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded">Sent</span>
-                      )}
-                      {userItem.friendship_status === "received_pending" && (
-                        <span className="text-xxs text-yellow-500 font-semibold italic bg-yellow-500/10 px-2 py-1 rounded">Received</span>
-                      )}
-                      {userItem.friendship_status === "accepted" && (
-                        <span className="text-xxs text-brand-500 font-semibold bg-brand-500/10 px-2 py-1 rounded flex items-center gap-1"><Check className="w-3 h-3" /> Friend</span>
-                      )}
                     </div>
-                  ))
-                )}
-              </div>
+                    {item.file_url && (
+                      <button
+                        onClick={() => handleDownloadFile(item.file_url, item.file_name || "file")}
+                        className="px-3 py-1 bg-brand-500 text-white rounded-lg text-xs font-semibold hover:bg-brand-600"
+                      >
+                        Download
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Notifications Drawer Modal */}
-      {isNotificationsOpen && (
-        <div className="fixed inset-0 z-50 flex justify-start bg-slate-950/40 backdrop-blur-sm animate-fadeIn">
-          <div className="w-80 h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-850 p-6 flex flex-col shadow-2xl">
-            <div className="flex items-center justify-between mb-6">
-              <h4 className="text-lg font-bold text-slate-800 dark:text-white font-display flex items-center gap-2">
-                <Bell className="w-5 h-5 text-brand-500" />
-                Workspace Alerts
-              </h4>
-              <button onClick={() => setIsNotificationsOpen(false)} className="p-1.5 hover:bg-slate-150 dark:hover:bg-slate-800 text-slate-400 rounded-lg">
-                <X className="w-4 h-4" />
+      {/* WebRTC Video / Voice Call Overlay Modal */}
+      {activeCall && (
+        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-8 flex flex-col items-center shadow-2xl relative text-center">
+            <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-brand-600 to-indigo-600 flex items-center justify-center text-3xl font-bold text-white mb-4 animate-pulse shadow-xl shadow-brand-500/20">
+              {activeCall.callerName?.slice(0, 2).toUpperCase() || "CS"}
+            </div>
+            
+            <h3 className="font-bold text-xl text-white font-display mb-1">{activeCall.callerName}</h3>
+            <p className="text-xs text-brand-400 font-semibold uppercase tracking-wider mb-6">
+              {activeCall.isIncoming ? `Incoming ${activeCall.callType} Call...` : `Active ${activeCall.callType} Call`}
+            </p>
+
+            {/* Video Streams Container (Simulated/Real canvas WebRTC placeholder) */}
+            <div className="w-full h-48 bg-slate-950 rounded-2xl border border-slate-800 mb-6 flex items-center justify-center relative overflow-hidden">
+              <Video className="w-12 h-12 text-slate-700 animate-bounce" />
+              <span className="absolute bottom-3 left-3 text-xxs text-slate-400 font-mono">Stream Encrypted (AES-256)</span>
+            </div>
+
+            {/* Call Action Controls */}
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setIsMuted(!isMuted)}
+                className={`p-4 rounded-2xl transition-colors ${isMuted ? "bg-red-500 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+              >
+                {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
+              </button>
+
+              <button
+                onClick={endCall}
+                className="p-4 rounded-2xl bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-600/30 transition-all transform hover:scale-105"
+              >
+                <PhoneOff className="w-6 h-6" />
+              </button>
+
+              <button
+                onClick={() => setIsVideoOff(!isVideoOff)}
+                className={`p-4 rounded-2xl transition-colors ${isVideoOff ? "bg-red-500 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+              >
+                {isVideoOff ? <VideoOff className="w-6 h-6" /> : <Video className="w-6 h-6" />}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Poll Creation Modal */}
+      {isPollModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Vote className="w-5 h-5 text-brand-500" />
+                Create In-Chat Poll
+              </h3>
+              <button onClick={() => setIsPollModalOpen(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
               </button>
             </div>
 
-            {notifications.length > 0 && (
-              <button 
-                onClick={markAllAsRead}
-                className="w-full text-center py-2 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-850 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-600 dark:text-slate-350 rounded-xl mb-4 transition-all"
-              >
-                Clear All Notifications
-              </button>
-            )}
+            <form onSubmit={handleCreatePollSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Question</label>
+                <input
+                  type="text"
+                  value={pollQuestion}
+                  onChange={(e) => setPollQuestion(e.target.value)}
+                  placeholder="e.g. What time should we meet for sprint review?"
+                  className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-brand-500"
+                />
+              </div>
 
-            <div className="flex-1 overflow-y-auto space-y-3">
-              {notifications.length === 0 ? (
-                <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-8 italic">No notifications found.</p>
-              ) : (
-                notifications.map((notif) => (
-                  <div 
-                    key={notif.id} 
-                    onClick={() => markAsRead(notif.id)}
-                    className={`p-3 rounded-xl border relative transition-all ${
-                      notif.is_read 
-                        ? "bg-slate-50 dark:bg-slate-950/20 border-slate-100 dark:border-slate-850/60 opacity-60" 
-                        : "bg-brand-500/5 dark:bg-brand-500/5 border-brand-500/20 shadow-sm"
-                    }`}
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Options</label>
+                {pollOptions.map((opt, i) => (
+                  <input
+                    key={i}
+                    type="text"
+                    value={opt}
+                    onChange={(e) => {
+                      const updated = [...pollOptions];
+                      updated[i] = e.target.value;
+                      setPollOptions(updated);
+                    }}
+                    placeholder={`Option ${i + 1}`}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-100 mb-2 outline-none focus:border-brand-500"
+                  />
+                ))}
+                {pollOptions.length < 5 && (
+                  <button
+                    type="button"
+                    onClick={() => setPollOptions([...pollOptions, ""])}
+                    className="text-xs text-brand-500 font-semibold hover:underline"
                   >
-                    <h5 className="font-semibold text-xs text-slate-900 dark:text-slate-100">{notif.title}</h5>
-                    <p className="text-xxs text-slate-450 dark:text-slate-400 mt-1">{notif.content}</p>
-                    
-                    {/* If friend request notification, offer action buttons */}
-                    {notif.type === "friend_request" && !notif.is_read && (
-                      <div className="flex items-center gap-2 mt-3">
-                        <button
-                          onClick={() => handleFriendResponse(notif.reference_id, "accept")}
-                          className="px-2 py-1 bg-brand-500 text-white rounded text-xxs font-bold hover:bg-brand-400"
-                        >
-                          Accept
-                        </button>
-                        <button
-                          onClick={() => handleFriendResponse(notif.reference_id, "reject")}
-                          className="px-2 py-1 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded text-xxs font-bold hover:bg-slate-300 dark:hover:bg-slate-700"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    )}
+                    + Add Option
+                  </button>
+                )}
+              </div>
 
-                    <span className="absolute top-3 right-3 text-xxs text-slate-400 dark:text-slate-500">
-                      {new Date(notif.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPollModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-600 dark:text-slate-300 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-brand-500 text-white text-xs font-semibold rounded-xl hover:bg-brand-600 shadow-md"
+                >
+                  Create Poll
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Code Explain Modal */}
+      {codeExplainModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Code className="w-5 h-5 text-indigo-500" />
+                AI Code Assistant Explanation
+              </h3>
+              <button onClick={() => setCodeExplainModal({ ...codeExplainModal, isOpen: false })} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            <div className="mb-4 p-3 bg-slate-950 text-indigo-300 font-mono text-xs rounded-xl overflow-x-auto max-h-36">
+              <pre>{codeExplainModal.code}</pre>
+            </div>
+
+            {codeExplainModal.loading ? (
+              <p className="text-xs text-indigo-500 font-semibold animate-pulse py-4">Analyzing code structure and edge cases using Gemini AI...</p>
+            ) : (
+              <div className="text-xs text-slate-700 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+                {codeExplainModal.explanation}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* AI Summary Modal */}
+      {isSummaryOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-indigo-500" />
+                AI Conversation Summary
+              </h3>
+              <button onClick={() => setIsSummaryOpen(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            {loadingSummary ? (
+              <div className="py-8 text-center text-xs text-indigo-500 font-semibold animate-pulse">
+                Summarizing conversation logs with Gemini AI...
+              </div>
+            ) : (
+              <div className="text-xs text-slate-700 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+                {chatSummary}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Search Users Modal */}
+      {isSearchOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Search className="w-5 h-5 text-brand-500" />
+                Find Connections
+              </h3>
+              <button onClick={() => setIsSearchOpen(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSearchUsers} className="flex gap-2 mb-4">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search username or email..."
+                className="flex-1 p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-brand-500"
+              />
+              <button type="submit" className="px-4 py-2.5 bg-brand-500 text-white rounded-xl text-xs font-semibold hover:bg-brand-600">
+                Search
+              </button>
+            </form>
+
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {searchResults.length === 0 && hasSearched && (
+                <p className="text-xs text-slate-400 text-center py-4">No matching users found.</p>
+              )}
+              {searchResults.map((u) => (
+                <div key={u.id} className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <img src={u.profile_photo || `https://api.dicebear.com/7.x/adventurer/svg?seed=${u.username}`} className="w-8 h-8 rounded-full" />
+                    <div>
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-200">@{u.username}</p>
+                      <p className="text-xxs text-slate-400">{u.email}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleSendRequest(u.username)}
+                    className="px-3 py-1 bg-brand-500/10 text-brand-500 text-xs font-semibold rounded-lg hover:bg-brand-500 hover:text-white transition-colors"
+                  >
+                    Add Friend
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notifications Modal */}
+      {isNotificationsOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Bell className="w-5 h-5 text-brand-500" />
+                Alerts & Requests
+              </h3>
+              <button onClick={() => setIsNotificationsOpen(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {pendingRequests.length > 0 && (
+                <div className="mb-4">
+                  <span className="text-xxs font-bold text-slate-400 uppercase">Pending Friend Requests</span>
+                  {pendingRequests.map((req) => (
+                    <div key={req.id} className="p-3 mt-1 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">@{req.sender_username}</span>
+                      <div className="flex gap-1">
+                        <button onClick={() => handleFriendResponse(req.id, "accepted")} className="px-2.5 py-1 bg-brand-500 text-white rounded-lg text-xxs font-bold">Accept</button>
+                        <button onClick={() => handleFriendResponse(req.id, "rejected")} className="px-2.5 py-1 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-xxs font-bold">Decline</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <span className="text-xxs font-bold text-slate-400 uppercase">System Alerts</span>
+              {notifications.length === 0 ? (
+                <p className="text-xs text-slate-400 py-4 text-center">No alerts right now.</p>
+              ) : (
+                notifications.map((n) => (
+                  <div key={n.id} className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                    <p className="text-xs font-bold text-slate-800 dark:text-slate-200">{n.title}</p>
+                    <p className="text-xxs text-slate-400 mt-0.5">{n.content}</p>
                   </div>
                 ))
               )}
@@ -1126,83 +1467,41 @@ export default function Dashboard() {
 
       {/* Profile Settings Modal */}
       {isProfileOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl relative mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-lg font-bold text-slate-800 dark:text-white font-display flex items-center gap-2">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Settings className="w-5 h-5 text-brand-500" />
                 Profile Settings
-              </h4>
-              <button onClick={() => setIsProfileOpen(false)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 rounded-lg">
-                <X className="w-4 h-4" />
+              </h3>
+              <button onClick={() => setIsProfileOpen(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
               </button>
             </div>
 
             <form onSubmit={handleUpdateProfile} className="space-y-4">
-              <div className="flex flex-col items-center py-2">
-                 <div 
-                   onClick={() => profileFileInputRef.current?.click()}
-                   className="relative group cursor-pointer w-20 h-20 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden hover:scale-102 hover:border-brand-500 transition-all flex items-center justify-center bg-slate-100 dark:bg-slate-950"
-                   title="Click to upload profile picture"
-                 >
-                   <img
-                     src={newPhoto || `https://api.dicebear.com/7.x/adventurer/svg?seed=${user?.username}`}
-                     alt="Avatar Preview"
-                     className="w-full h-full object-cover group-hover:opacity-75 transition-opacity"
-                   />
-                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white gap-1">
-                     <Camera className="w-5 h-5 text-white" />
-                     <span className="text-[9px] font-medium tracking-wide">Upload</span>
-                   </div>
-                 </div>
-                 <input 
-                   type="file"
-                   ref={profileFileInputRef}
-                   onChange={handleProfilePhotoUpload}
-                   className="hidden"
-                   accept="image/*"
-                 />
-                 <span className="text-[10px] text-slate-400 mt-2 font-medium">Click avatar to upload photo</span>
-               </div>
-
-               <div>
-                 <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Username</label>
-                 <input
-                   type="text"
-                   required
-                   className="w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl px-4 py-2 text-sm focus:outline-none"
-                   value={newUsername}
-                   onChange={(e) => setNewUsername(e.target.value)}
-                 />
-               </div>
-
-               <div>
-                 <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Photo URL (Optional)</label>
-                 <input
-                   type="text"
-                   className="w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl px-4 py-2 text-sm focus:outline-none"
-                   value={newPhoto}
-                   onChange={(e) => setNewPhoto(e.target.value)}
-                   placeholder="Or paste an image link"
-                 />
-               </div>
+              <div className="flex flex-col items-center gap-2">
+                <img src={newPhoto || `https://api.dicebear.com/7.x/adventurer/svg?seed=${user?.username}`} className="w-20 h-20 rounded-full border-2 border-brand-500" />
+                <input type="file" ref={profileFileInputRef} onChange={handleProfilePhotoUpload} className="hidden" accept="image/*" />
+                <button type="button" onClick={() => profileFileInputRef.current?.click()} className="text-xs text-brand-500 font-semibold hover:underline">
+                  Change Photo
+                </button>
+              </div>
 
               <div>
-                <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Status Message</label>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Username</label>
                 <input
                   type="text"
-                  className="w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl px-4 py-2 text-sm focus:outline-none"
-                  value={newStatus}
-                  onChange={(e) => setNewStatus(e.target.value)}
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-brand-500"
                 />
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-brand-500 hover:bg-brand-400 text-white rounded-xl font-semibold text-sm shadow-md transition-all mt-2"
-              >
-                Save Profile
-              </button>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setIsProfileOpen(false)} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-xs font-semibold rounded-xl">Cancel</button>
+                <button type="submit" className="px-4 py-2 bg-brand-500 text-white text-xs font-semibold rounded-xl hover:bg-brand-600 shadow-md">Save Changes</button>
+              </div>
             </form>
           </div>
         </div>
@@ -1210,158 +1509,81 @@ export default function Dashboard() {
 
       {/* Create Group Modal */}
       {isGroupOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl relative mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-lg font-bold text-slate-800 dark:text-white font-display">Create Group</h4>
-              <button onClick={() => { setIsGroupOpen(false); setSelectedGroupMembers([]); }} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 rounded-lg">
-                <X className="w-4 h-4" />
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Users className="w-5 h-5 text-brand-500" />
+                Create Group Channel
+              </h3>
+              <button onClick={() => setIsGroupOpen(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
               </button>
             </div>
 
             <form onSubmit={handleCreateGroup} className="space-y-4">
               <div>
-                <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Group Name</label>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Group Name</label>
                 <input
                   type="text"
-                  required
-                  placeholder="Design Unit"
-                  className="w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none"
                   value={groupName}
                   onChange={(e) => setGroupName(e.target.value)}
+                  placeholder="e.g. Engineering Team"
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-brand-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Group Description</label>
-                <textarea
-                  placeholder="Group for assets sync"
-                  className="w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none h-16 resize-none"
-                  value={groupDesc}
-                  onChange={(e) => setGroupDesc(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-2">Select Friends to Add</label>
-                <div className="max-h-32 overflow-y-auto space-y-2 border border-slate-150 dark:border-slate-800 p-2.5 rounded-xl">
-                  {friends.length === 0 ? (
-                    <p className="text-xxs text-slate-400 dark:text-slate-500 italic text-center py-4">Add friends before building groups.</p>
-                  ) : (
-                    friends.map((friend) => {
-                      const isSelected = selectedGroupMembers.includes(friend.id);
-                      return (
-                        <div 
-                          key={friend.id}
-                          onClick={() => {
-                            if (isSelected) {
-                              setSelectedGroupMembers(prev => prev.filter(id => id !== friend.id));
-                            } else {
-                              setSelectedGroupMembers(prev => [...prev, friend.id]);
-                            }
-                          }}
-                          className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors ${
-                            isSelected ? "bg-brand-500/10 text-brand-600 dark:text-brand-400" : "hover:bg-slate-50 dark:hover:bg-slate-950/40"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <img src={friend.profile_photo} alt="" className="w-6 h-6 rounded-full" />
-                            <span className="text-xs font-semibold">@{friend.username}</span>
-                          </div>
-                          <div className={`w-4 h-4 border rounded flex items-center justify-center ${
-                            isSelected ? "border-brand-500 bg-brand-500 text-white" : "border-slate-300 dark:border-slate-700"
-                          }`}>
-                            {isSelected && <Check className="w-3 h-3" />}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Select Friends</label>
+                <div className="space-y-1 max-h-40 overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-xl p-2">
+                  {friends.map((f) => (
+                    <label key={f.id} className="flex items-center gap-2 p-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg cursor-pointer text-xs">
+                      <input
+                        type="checkbox"
+                        checked={selectedGroupMembers.includes(f.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedGroupMembers([...selectedGroupMembers, f.id]);
+                          else setSelectedGroupMembers(selectedGroupMembers.filter(id => id !== f.id));
+                        }}
+                      />
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">@{f.username}</span>
+                    </label>
+                  ))}
                 </div>
               </div>
 
-              <button
-                type="submit"
-                disabled={friends.length === 0 || !groupName.trim() || selectedGroupMembers.length === 0}
-                className="w-full py-2.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 disabled:pointer-events-none text-white rounded-xl font-semibold text-sm shadow-md transition-all mt-2"
-              >
-                Create Group Chat
-              </button>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setIsGroupOpen(false)} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-xs font-semibold rounded-xl">Cancel</button>
+                <button type="submit" className="px-4 py-2 bg-brand-500 text-white text-xs font-semibold rounded-xl hover:bg-brand-600 shadow-md">Create Group</button>
+              </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* AI Summary Modal */}
-      {isSummaryOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl relative mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-lg font-bold text-slate-800 dark:text-white font-display flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-indigo-400 animate-pulse" />
-                Gemini Conversation Summary
-              </h4>
-              <button onClick={() => setIsSummaryOpen(false)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 rounded-lg">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {/* Delete Message Confirmation Modal */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl text-center">
+            <h3 className="font-bold text-base text-slate-900 dark:text-white mb-2">Delete Message</h3>
+            <p className="text-xs text-slate-400 mb-6">Choose whether to remove this message for only yourself or for everyone in this chat.</p>
 
-            <div className="bg-slate-50 dark:bg-slate-950 border border-slate-150 dark:border-slate-850 p-4 rounded-xl text-sm leading-relaxed max-h-80 overflow-y-auto">
-              {loadingSummary ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-3">
-                  <span className="w-8 h-8 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin"></span>
-                  <span className="text-xs text-slate-400 font-semibold animate-pulse">Consulting Gemini models...</span>
-                </div>
-              ) : (
-                <div className="prose prose-slate dark:prose-invert text-slate-700 dark:text-slate-350 text-xs whitespace-pre-wrap">
-                  {chatSummary}
-                </div>
-              )}
-            </div>
-
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={() => setIsSummaryOpen(false)}
-                className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-all"
-              >
-                Close Summary
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {isDeleteModalOpen && deleteTargetMsg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl relative mx-4 animate-scaleUp">
-            <h4 className="text-base font-bold text-slate-800 dark:text-white mb-2 font-display">
-              Delete Message?
-            </h4>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">
-              Are you sure you want to delete this message? This action cannot be undone.
-            </p>
             <div className="flex flex-col gap-2">
               <button
+                onClick={handleDeleteForEveryone}
+                className="w-full py-2.5 bg-red-500 hover:bg-red-600 text-white font-semibold text-xs rounded-xl shadow-md transition-colors"
+              >
+                Delete for Everyone
+              </button>
+              <button
                 onClick={handleDeleteForMe}
-                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 font-semibold text-xs rounded-xl transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
+                className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold text-xs rounded-xl hover:bg-slate-200 dark:hover:bg-slate-750 transition-colors"
               >
                 Delete for Me
               </button>
-              {deleteTargetMsg.sender_id === user?.id && (
-                <button
-                  onClick={handleDeleteForEveryone}
-                  className="w-full py-2.5 bg-red-500 hover:bg-red-650 text-white font-semibold text-xs rounded-xl transition-all cursor-pointer"
-                >
-                  Delete for Everyone
-                </button>
-              )}
               <button
-                onClick={() => {
-                  setIsDeleteModalOpen(false);
-                  setDeleteTargetMsg(null);
-                }}
-                className="w-full py-2.5 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-850 text-slate-400 dark:text-slate-500 font-semibold text-xs rounded-xl transition-all cursor-pointer mt-1"
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="w-full py-2 text-xs text-slate-400 font-medium hover:underline mt-1"
               >
                 Cancel
               </button>
