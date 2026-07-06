@@ -1,5 +1,10 @@
 let base = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
 
+// If base is relative (e.g. starts with '/'), prefix it with window.location.origin
+if (base.startsWith("/")) {
+  base = window.location.origin + base;
+}
+
 // Auto-append '/api' if not present in the environment variable
 if (base && !base.endsWith("/api")) {
   base = base.replace(/\/$/, "") + "/api";
