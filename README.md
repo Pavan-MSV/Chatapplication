@@ -1,3 +1,12 @@
+---
+title: Chatsphere
+emoji: 👁
+colorFrom: red
+colorTo: gray
+sdk: docker
+pinned: false
+---
+
 # ChatSphere AI - Production-Ready Real-Time Chat Application
 
 ChatSphere AI is a modern WhatsApp/Discord-style real-time collaboration platform featuring private DMs, group chats, file sharing, voice recording, presence tracking, and AI-powered interactions (powered by Google Gemini). 
