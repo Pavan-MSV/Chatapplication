@@ -8,7 +8,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from backend.app.main import app
 
 # Remove the default backend welcome route at "/" so it serves the frontend index.html instead
-app.routes = [route for route in app.routes if route.path != "/"]
+app.routes = [route for route in app.routes if not hasattr(route, "path") or route.path != "/"]
 
 # Custom SPA (Single Page Application) routing fallback handler
 @app.exception_handler(StarletteHTTPException)
