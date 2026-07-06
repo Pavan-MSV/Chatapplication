@@ -3,12 +3,12 @@ import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || ""
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyByftYlIvs3LYETYij5VE02jqf-2SgVBIc",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "chatapplication-0308.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "chatapplication-0308",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "chatapplication-0308.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "636148871945",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:636148871945:web:3460152127f3d95d7559d8"
 };
 
 // Check if a real key has been provided
