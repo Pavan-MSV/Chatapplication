@@ -1,6 +1,6 @@
 # Multi-stage build to package both frontend and backend
 # Stage 1: Build the React frontend
-FROM node:18 AS frontend-builder
+FROM node:20 AS frontend-builder
 WORKDIR /app/frontend
 
 # Copy package files and install dependencies
