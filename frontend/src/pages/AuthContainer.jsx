@@ -76,9 +76,16 @@ export default function AuthContainer() {
   };
 
   const setupRecaptcha = () => {
+    // Clear previous verifier if it exists to attach to new DOM element
     if (window.recaptchaVerifier) {
-      return window.recaptchaVerifier;
+      try {
+        window.recaptchaVerifier.clear();
+      } catch (e) {
+        console.error("Error clearing recaptcha:", e);
+      }
+      window.recaptchaVerifier = null;
     }
+
     const container = document.getElementById("recaptcha-container");
     if (!container) {
       console.error("recaptcha-container element not found in DOM");
@@ -190,7 +197,11 @@ export default function AuthContainer() {
     try {
       await loginWithGoogle();
     } catch (err) {
-      setError(err.message || "Google authentication failed.");
+      if (err.message && (err.message.includes("popup-blocked") || err.message.includes("popup_blocked") || err.code === "auth/popup-blocked")) {
+        setError("Google Sign-In popup was blocked by your browser. Please disable your popup blocker or allow popups for this site and try again.");
+      } else {
+        setError(err.message || "Google authentication failed.");
+      }
     }
   };
 
@@ -288,6 +299,7 @@ export default function AuthContainer() {
             </button>
           </div>
         </div>
+        <div id="recaptcha-container"></div>
       </div>
     );
   }
@@ -374,6 +386,7 @@ export default function AuthContainer() {
             </button>
           </div>
         </div>
+        <div id="recaptcha-container"></div>
       </div>
     );
   }
