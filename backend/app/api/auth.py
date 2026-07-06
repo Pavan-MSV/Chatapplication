@@ -33,7 +33,7 @@ class ResendOTPPayload(BaseModel):
 @router.post("/register")
 def register_user(payload: UserCreate, db: Session = Depends(get_db)):
     """
-    Standard Email/Password Registration with OTP verification step.
+    Standard Email/Password Registration. Supports phone verification.
     """
     clean_email = payload.email.strip().lower()
     clean_username = payload.username.strip()
@@ -65,9 +65,23 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
                 existing_user.username = clean_username
             
             existing_user.email = clean_email
+            if payload.phone_number:
+                existing_user.phone_number = payload.phone_number.strip()
+            if payload.firebase_uid:
+                existing_user.firebase_uid = payload.firebase_uid
             existing_user.hashed_password = get_password_hash(payload.password)
             user = existing_user
     else:
+        # Check if phone number already registered to another account
+        if payload.phone_number:
+            clean_phone = payload.phone_number.strip()
+            existing_phone = db.query(User).filter(User.phone_number == clean_phone).first()
+            if existing_phone:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Phone number already registered to another account."
+                )
+
         # Hash the password
         hashed_pwd = get_password_hash(payload.password)
         
@@ -75,6 +89,8 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
         user = User(
             username=clean_username,
             email=clean_email,
+            phone_number=payload.phone_number.strip() if payload.phone_number else None,
+            firebase_uid=payload.firebase_uid,
             hashed_password=hashed_pwd,
             profile_photo=payload.profile_photo or f"https://api.dicebear.com/7.x/adventurer/svg?seed={clean_username}",
             status="offline",
@@ -82,20 +98,18 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
         )
         db.add(user)
 
-
     # Generate 6-digit OTP code
     otp = str(random.randint(100000, 999999))
     user.otp_code = otp
     user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     
-    # Auto-verify in test or dev bypass environment
+    # Auto-verify in test or dev bypass environment or if registered via Firebase (phone/social)
     import os
-    if os.getenv("TESTING") == "True" or (settings.DEV_BYPASS_FIREBASE and os.getenv("TESTING") != "False"):
+    if os.getenv("TESTING") == "True" or (settings.DEV_BYPASS_FIREBASE and os.getenv("TESTING") != "False") or payload.firebase_uid:
         user.is_verified = True
         user.otp_code = None
         user.otp_expires_at = None
 
-        
     db.commit()
     db.refresh(user)
 
@@ -273,14 +287,27 @@ def verify_firebase(payload: UserFirebaseLogin, db: Session = Depends(get_db)):
         
     firebase_uid = firebase_claims.get("uid")
     email = firebase_claims.get("email")
-    display_name = firebase_claims.get("name") or email.split("@")[0]
+    phone_number = firebase_claims.get("phone_number")
     picture = firebase_claims.get("picture")
 
-    # Check if user exists by Firebase UID or Email
-    user = db.query(User).filter(
-        (User.firebase_uid == firebase_uid) | (User.email == email)
-    ).first()
-    
+    # Resolve email and phone fallback logic
+    if not email and phone_number:
+        # Create a unique email for phone users to satisfy unique not-null DB constraints
+        email = f"{phone_number.strip().replace('+', '')}@chatsphere.ai"
+    if not email:
+        email = f"{firebase_uid}@chatsphere.ai"
+
+    # Search for existing user by Firebase UID, Phone Number, or Email
+    user = None
+    if firebase_uid:
+        user = db.query(User).filter(User.firebase_uid == firebase_uid).first()
+    if not user and phone_number:
+        user = db.query(User).filter(User.phone_number == phone_number).first()
+    if not user and email:
+        user = db.query(User).filter(User.email == email).first()
+
+    display_name = firebase_claims.get("name") or (phone_number if phone_number else email.split("@")[0])
+
     if not user:
         # Generate a unique username if username is taken
         username = display_name.replace(" ", "_").lower()
@@ -294,19 +321,25 @@ def verify_firebase(payload: UserFirebaseLogin, db: Session = Depends(get_db)):
             firebase_uid=firebase_uid,
             username=username,
             email=email,
+            phone_number=phone_number,
             profile_photo=picture or f"https://api.dicebear.com/7.x/adventurer/svg?seed={username}",
             status="offline"
         )
         db.add(user)
         db.commit()
         db.refresh(user)
-    elif not user.firebase_uid:
-        # Link existing email-registered user to Firebase UID
-        user.firebase_uid = firebase_uid
-        if picture and not user.profile_photo:
-            user.profile_photo = picture
-        db.commit()
-        db.refresh(user)
+    else:
+        # User exists, link additional credentials if not set
+        updated = False
+        if firebase_uid and user.firebase_uid != firebase_uid:
+            user.firebase_uid = firebase_uid
+            updated = True
+        if phone_number and user.phone_number != phone_number:
+            user.phone_number = phone_number
+            updated = True
+        if updated:
+            db.commit()
+            db.refresh(user)
 
     # Generate backend access token
     access_token = create_access_token(

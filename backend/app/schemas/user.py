@@ -10,6 +10,7 @@ class UserCreate(UserBase):
     password: str
     firebase_uid: Optional[str] = None
     profile_photo: Optional[str] = None
+    phone_number: Optional[str] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -28,6 +29,7 @@ class UserResponse(UserBase):
     status: str
     last_seen: Optional[datetime] = None
     created_at: datetime
+    phone_number: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -43,6 +45,7 @@ class UserSearchResponse(BaseModel):
     email: str
     profile_photo: Optional[str] = None
     status: str
+    phone_number: Optional[str] = None
     friendship_status: Optional[str] = None  # pending, accepted, rejected, blocked, or None
 
     class Config:

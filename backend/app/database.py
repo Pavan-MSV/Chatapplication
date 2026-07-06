@@ -36,7 +36,8 @@ def init_db():
         for col_name, col_type in [
             ("is_verified", "BOOLEAN DEFAULT TRUE"),
             ("otp_code", "VARCHAR"),
-            ("otp_expires_at", "TIMESTAMP")
+            ("otp_expires_at", "TIMESTAMP"),
+            ("phone_number", "VARCHAR UNIQUE")
         ]:
             try:
                 db.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))

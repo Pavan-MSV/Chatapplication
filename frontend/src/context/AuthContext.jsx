@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import axios from "axios";
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, signInWithPhoneNumber, RecaptchaVerifier } from "firebase/auth";
 import { auth as firebaseAuth, isConfigured as isFirebaseConfigured } from "../config/firebase";
 
 import { API_BASE } from "../config/api";
@@ -72,14 +72,16 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const registerWithEmail = async (username, email, password) => {
+  const registerWithEmail = async (username, email, password, phoneNumber = null, firebaseUid = null) => {
     setLoading(true);
     try {
       // Use Direct Backend API Register to generate and send custom OTP codes
       const res = await axios.post(`${API_BASE}/auth/register`, {
         username,
         email,
-        password
+        password,
+        phone_number: phoneNumber,
+        firebase_uid: firebaseUid
       });
       if (res.data.access_token) {
         handleAuthSuccess(res.data);
@@ -134,6 +136,58 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const loginWithPhone = async (phoneNumber, appVerifier) => {
+    if (!isFirebaseConfigured || !firebaseAuth) {
+      // Mock phone login in dev/bypass mode
+      console.log("Mock Phone login initiated for:", phoneNumber);
+      return {
+        confirm: async (code) => {
+          if (code !== "123456" && code !== "111111") {
+            throw new Error("Invalid verification code (Bypass mode: use 123456 or 111111)");
+          }
+          // Return a mock user object with getIdToken
+          return {
+            user: {
+              uid: `mock:phone_${phoneNumber.replace("+", "").replace(" ", "")}`,
+              phoneNumber: phoneNumber,
+              getIdToken: async () => `mock:phone_uid:${phoneNumber}:Phone_User`
+            }
+          };
+        }
+      };
+    }
+
+    setLoading(true);
+    try {
+      const confirmationResult = await signInWithPhoneNumber(firebaseAuth, phoneNumber, appVerifier);
+      return confirmationResult;
+    } catch (err) {
+      console.error("Phone sign-in dispatch failed:", err);
+      throw new Error(err.message || "Failed to send SMS verification code.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmPhoneCode = async (confirmationResult, code) => {
+    setLoading(true);
+    try {
+      const result = await confirmationResult.confirm(code);
+      const firebaseToken = await result.user.getIdToken();
+      
+      const res = await axios.post(`${API_BASE}/auth/verify`, {
+        firebase_id_token: firebaseToken
+      });
+      handleAuthSuccess(res.data);
+      return { success: true, user: res.data };
+    } catch (err) {
+      console.error("Phone verification/login failed:", err);
+      throw new Error(err.response?.data?.detail || err.message || "Invalid verification code.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const verifyOtp = async (email, otpCode) => {
     setLoading(true);
     try {
@@ -181,6 +235,8 @@ export const AuthProvider = ({ children }) => {
         loginWithEmail,
         registerWithEmail,
         loginWithGoogle,
+        loginWithPhone,
+        confirmPhoneCode,
         verifyOtp,
         resendOtp,
         logout,

@@ -10,6 +10,7 @@ class User(Base):
     firebase_uid = Column(String, unique=True, index=True, nullable=True)
     username = Column(String, unique=True, index=True, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
+    phone_number = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String, nullable=True)  # Nullable for Firebase OAuth
     profile_photo = Column(String, nullable=True)
     status = Column(String, default="offline")  # online, offline, away

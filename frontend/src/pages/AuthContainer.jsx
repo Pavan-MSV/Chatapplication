@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { LogIn, UserPlus, MessageSquare, AlertCircle, Sparkles, ArrowLeft } from "lucide-react";
+import { LogIn, UserPlus, MessageSquare, AlertCircle, Sparkles, ArrowLeft, Phone } from "lucide-react";
+import { RecaptchaVerifier } from "firebase/auth";
+import { auth as firebaseAuth } from "../config/firebase";
 
 export default function AuthContainer() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { loginWithEmail, registerWithEmail, loginWithGoogle, verifyOtp, resendOtp, loading } = useAuth();
+  const { loginWithEmail, registerWithEmail, loginWithGoogle, loginWithPhone, confirmPhoneCode, verifyOtp, resendOtp, loading } = useAuth();
 
   // Determine mode from the URL path
   const isSignUpPath = location.pathname === "/register";
@@ -29,6 +31,15 @@ export default function AuthContainer() {
   const [registerUsername, setRegisterUsername] = useState("");
   const [registerEmail, setRegisterEmail] = useState("");
   const [registerPassword, setRegisterPassword] = useState("");
+
+  // Phone OTP States
+  const [registerPhone, setRegisterPhone] = useState("");
+  const [loginPhone, setLoginPhone] = useState("");
+  const [phoneLoginMode, setPhoneLoginMode] = useState(false);
+  const [smsCode, setSmsCode] = useState("");
+  const [showSmsVerification, setShowSmsVerification] = useState(false);
+  const [smsLoading, setSmsLoading] = useState(false);
+  const [confirmationResult, setConfirmationResult] = useState(null);
 
   // Keep state in sync if path changes externally
   useEffect(() => {
@@ -64,6 +75,32 @@ export default function AuthContainer() {
     }
   };
 
+  const setupRecaptcha = () => {
+    if (window.recaptchaVerifier) {
+      return window.recaptchaVerifier;
+    }
+    const container = document.getElementById("recaptcha-container");
+    if (!container) {
+      console.error("recaptcha-container element not found in DOM");
+      return null;
+    }
+    try {
+      window.recaptchaVerifier = new RecaptchaVerifier(firebaseAuth, "recaptcha-container", {
+        size: "invisible",
+        callback: (response) => {
+          // reCAPTCHA solved
+        },
+        "expired-callback": () => {
+          setError("reCAPTCHA expired. Please request SMS code again.");
+        }
+      });
+      return window.recaptchaVerifier;
+    } catch (err) {
+      console.error("Error initializing RecaptchaVerifier:", err);
+      return null;
+    }
+  };
+
   const handleRegisterSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -75,16 +112,76 @@ export default function AuthContainer() {
       setError("Password must be at least 6 characters.");
       return;
     }
+    if (!registerPhone || registerPhone.trim() === "") {
+      setError("Phone number is required.");
+      return;
+    }
+
+    setSmsLoading(true);
     try {
-      const res = await registerWithEmail(registerUsername, registerEmail, registerPassword);
-      if (res && res.requires_verification) {
-        setOtpEmail(res.email);
-        setOtpMessage(res.message || "A verification OTP code was sent to your email.");
-        setOtpError("");
-        setShowOtp(true);
+      let appVerifier = null;
+      if (firebaseAuth) {
+        appVerifier = setupRecaptcha();
+      }
+      const result = await loginWithPhone(registerPhone.trim(), appVerifier);
+      setConfirmationResult(result);
+      setPhoneLoginMode(false);
+      setShowSmsVerification(true);
+    } catch (err) {
+      setError(err.message || "Failed to send SMS verification code. Please check your phone format (e.g. +1234567890).");
+    } finally {
+      setSmsLoading(false);
+    }
+  };
+
+  const handlePhoneLoginInitiate = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (!loginPhone || loginPhone.trim() === "") {
+      setError("Phone number is required.");
+      return;
+    }
+
+    setSmsLoading(true);
+    try {
+      let appVerifier = null;
+      if (firebaseAuth) {
+        appVerifier = setupRecaptcha();
+      }
+      const result = await loginWithPhone(loginPhone.trim(), appVerifier);
+      setConfirmationResult(result);
+      setPhoneLoginMode(true);
+      setShowSmsVerification(true);
+    } catch (err) {
+      setError(err.message || "Failed to send verification SMS.");
+    } finally {
+      setSmsLoading(false);
+    }
+  };
+
+  const handleSmsVerifySubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSmsLoading(true);
+    try {
+      if (phoneLoginMode) {
+        await confirmPhoneCode(confirmationResult, smsCode);
+      } else {
+        const result = await confirmationResult.confirm(smsCode);
+        const firebaseUid = result.user.uid;
+        await registerWithEmail(
+          registerUsername,
+          registerEmail,
+          registerPassword,
+          registerPhone.trim(),
+          firebaseUid
+        );
       }
     } catch (err) {
-      setError(err.message || "Registration failed.");
+      console.error("SMS verification failed:", err);
+      setError(err.message || "Invalid or expired SMS verification code.");
+    } finally {
+      setSmsLoading(false);
     }
   };
 
@@ -122,6 +219,78 @@ export default function AuthContainer() {
       setOtpError(err.message || "Failed to resend verification code.");
     }
   };
+
+  if (showSmsVerification) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 px-4 relative overflow-hidden">
+        {/* Dynamic Background Blobs */}
+        <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-brand-500 rounded-full mix-blend-screen filter blur-[128px] opacity-15 animate-pulse duration-10000"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-indigo-500 rounded-full mix-blend-screen filter blur-[128px] opacity-15"></div>
+
+        {/* SMS OTP Verification Card */}
+        <div className="w-full max-w-md p-8 glass rounded-2xl flex flex-col justify-center z-10 text-white shadow-2xl border border-white/10">
+          <div className="flex flex-col items-center mb-6">
+            <div className="w-12 h-12 bg-gradient-to-tr from-brand-500 to-emerald-500 rounded-xl flex items-center justify-center text-white mb-2 shadow-lg">
+              <Sparkles className="w-6 h-6 text-emerald-300 animate-pulse" />
+            </div>
+            <h2 className="text-2xl font-bold tracking-tight text-white">{phoneLoginMode ? "Phone Login Verification" : "Verify Phone Number"}</h2>
+            <p className="text-slate-400 text-xs mt-1 text-center leading-relaxed">
+              We've sent a 6-digit SMS verification code to <br/>
+              <span className="text-brand-300 font-semibold text-sm">{phoneLoginMode ? loginPhone : registerPhone}</span>
+            </p>
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-3 bg-red-950/40 border border-red-800/60 text-red-200 p-3.5 rounded-xl text-xs mb-4 animate-shake">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSmsVerifySubmit} className="space-y-5">
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">SMS Verification Code</label>
+              <input
+                type="text"
+                required
+                maxLength={6}
+                className="w-full bg-slate-950/40 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-center text-xl font-bold tracking-widest focus:outline-none focus:border-brand-500 transition-all focus:ring-1 focus:ring-brand-500/30"
+                placeholder="000000"
+                value={smsCode}
+                onChange={(e) => setSmsCode(e.target.value.replace(/\D/g, ''))}
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={smsLoading || smsCode.length !== 6}
+              className="w-full bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-500 hover:to-brand-400 text-white text-sm font-semibold py-2.5 rounded-xl shadow-lg shadow-brand-500/10 flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-50 disabled:pointer-events-none mt-2 cursor-pointer"
+            >
+              {smsLoading ? (
+                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              ) : (
+                <span>{phoneLoginMode ? "Verify & Login" : "Confirm & Sign Up"}</span>
+              )}
+            </button>
+          </form>
+
+          <div className="mt-6 flex flex-col gap-3.5 items-center text-xs">
+            <button
+              onClick={() => {
+                setShowSmsVerification(false);
+                setSmsCode("");
+                setError("");
+              }}
+              className="text-slate-400 hover:text-white flex items-center gap-1.5 hover:underline bg-transparent border-none cursor-pointer mt-1"
+            >
+              <ArrowLeft className="w-4 h-4 text-slate-400" />
+              <span>Back to details</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (showOtp) {
     return (
@@ -274,17 +443,29 @@ export default function AuthContainer() {
               />
             </div>
 
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Phone Number</label>
+              <input
+                type="tel"
+                required
+                className="w-full bg-slate-950/40 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 transition-all focus:ring-1 focus:ring-brand-500/30"
+                placeholder="+15555555555"
+                value={registerPhone}
+                onChange={(e) => setRegisterPhone(e.target.value)}
+              />
+            </div>
+
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || smsLoading}
               className="w-full bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-500 hover:to-brand-400 text-white text-sm font-semibold py-2.5 rounded-xl shadow-lg shadow-brand-500/10 flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-50 disabled:pointer-events-none mt-2 cursor-pointer"
             >
-              {loading ? (
+              {loading || smsLoading ? (
                 <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
               ) : (
                 <>
                   <UserPlus className="w-4 h-4" />
-                  <span>Register</span>
+                  <span>Register & Verify Phone</span>
                 </>
               )}
             </button>
@@ -354,46 +535,74 @@ export default function AuthContainer() {
             </div>
           )}
 
-          <form onSubmit={handleLoginSubmit} className="space-y-4">
-            <div>
-              <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Email Address</label>
-              <input
-                type="email"
-                required
-                className="w-full bg-slate-950/40 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 transition-all focus:ring-1 focus:ring-brand-500/30"
-                placeholder="you@example.com"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
-              />
-            </div>
+          <form onSubmit={phoneLoginMode ? handlePhoneLoginInitiate : handleLoginSubmit} className="space-y-4">
+            {!phoneLoginMode ? (
+              <>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    className="w-full bg-slate-950/40 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 transition-all focus:ring-1 focus:ring-brand-500/30"
+                    placeholder="you@example.com"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                  />
+                </div>
 
-            <div>
-              <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Password</label>
-              <input
-                type="password"
-                required
-                className="w-full bg-slate-950/40 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 transition-all focus:ring-1 focus:ring-brand-500/30"
-                placeholder="••••••••"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-              />
-            </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Password</label>
+                  <input
+                    type="password"
+                    required
+                    className="w-full bg-slate-950/40 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 transition-all focus:ring-1 focus:ring-brand-500/30"
+                    placeholder="••••••••"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                  />
+                </div>
+              </>
+            ) : (
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Phone Number</label>
+                <input
+                  type="tel"
+                  required
+                  className="w-full bg-slate-950/40 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 transition-all focus:ring-1 focus:ring-brand-500/30"
+                  placeholder="+15555555555"
+                  value={loginPhone}
+                  onChange={(e) => setLoginPhone(e.target.value)}
+                />
+              </div>
+            )}
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || smsLoading}
               className="w-full bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-500 hover:to-brand-400 text-white text-sm font-semibold py-2.5 rounded-xl shadow-lg shadow-brand-500/10 flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-50 disabled:pointer-events-none mt-2 cursor-pointer"
             >
-              {loading ? (
+              {loading || smsLoading ? (
                 <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
               ) : (
                 <>
-                  <LogIn className="w-4 h-4" />
-                  <span>Log In</span>
+                  {phoneLoginMode ? <Phone className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
+                  <span>{phoneLoginMode ? "Send Verification SMS" : "Log In"}</span>
                 </>
               )}
             </button>
           </form>
+
+          <div className="text-center mt-3">
+            <button
+              onClick={() => {
+                setError("");
+                setPhoneLoginMode(!phoneLoginMode);
+              }}
+              className="text-xs text-brand-400 hover:text-brand-300 font-semibold hover:underline bg-transparent border-none cursor-pointer"
+            >
+              {phoneLoginMode ? "Login with Email / Username instead" : "Login with Phone number instead"}
+            </button>
+          </div>
 
           <div className="relative my-4 flex items-center justify-center">
             <div className="absolute inset-0 flex items-center">
@@ -484,6 +693,7 @@ export default function AuthContainer() {
         </div>
 
       </div>
+      <div id="recaptcha-container"></div>
     </div>
   );
 }
