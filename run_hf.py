@@ -7,6 +7,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 # Import the main FastAPI app from the backend module
 from backend.app.main import app
 
+# Remove the default backend welcome route at "/" so it serves the frontend index.html instead
+app.routes = [route for route in app.routes if route.path != "/"]
+
 # Custom SPA (Single Page Application) routing fallback handler
 @app.exception_handler(StarletteHTTPException)
 async def spa_routing_handler(request, exc):
