@@ -1,6 +1,6 @@
 # Multi-stage build to package both frontend and backend
 # Stage 1: Build the React frontend
-FROM node:18-alpine AS frontend-builder
+FROM node:18 AS frontend-builder
 WORKDIR /app/frontend
 
 # Copy package files and install dependencies
@@ -18,18 +18,13 @@ ENV VITE_API_BASE_URL=/api
 RUN npm run build
 
 # Stage 2: Serve the backend FastAPI and static frontend files
-FROM python:3.10-slim
+FROM python:3.10
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install python dependencies
+# Upgrade pip and install python dependencies
+RUN pip install --no-cache-dir --upgrade pip
 COPY backend/requirements.txt ./backend/
-RUN pip install --no-cache-dir -r backend/requirements.txt psycopg2-binary uvicorn gunicorn
+RUN pip install --no-cache-dir -r backend/requirements.txt psycopg2-binary
 
 # Copy backend files
 COPY backend/ ./backend/
