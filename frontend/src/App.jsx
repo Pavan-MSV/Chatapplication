@@ -7,9 +7,9 @@ import Dashboard from "./pages/Dashboard";
 
 // Route Guard to verify user session
 const ProtectedRoute = ({ children }) => {
-  const { user, loading } = useAuth();
+  const { user, initializing } = useAuth();
   
-  if (loading) {
+  if (initializing) {
     return (
       <div className="min-h-screen w-full flex flex-col items-center justify-center bg-slate-950 text-white gap-3">
         <div className="w-10 h-10 border-4 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
@@ -23,9 +23,9 @@ const ProtectedRoute = ({ children }) => {
 
 // Route Guard for unauthenticated pages
 const PublicRoute = ({ children }) => {
-  const { user, loading } = useAuth();
+  const { user, initializing } = useAuth();
   
-  if (loading) {
+  if (initializing) {
     return (
       <div className="min-h-screen w-full flex flex-col items-center justify-center bg-slate-950 text-white gap-3">
         <div className="w-10 h-10 border-4 border-brand-500 border-t-transparent rounded-full animate-spin"></div>

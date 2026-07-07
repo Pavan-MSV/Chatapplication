@@ -12,6 +12,7 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [initializing, setInitializing] = useState(true);
 
   // Sync session on load
   useEffect(() => {
@@ -29,6 +30,7 @@ export const AuthProvider = ({ children }) => {
           setUser(null);
         }
       }
+      setInitializing(false);
       setLoading(false);
     };
 
@@ -115,12 +117,14 @@ export const AuthProvider = ({ children }) => {
       return;
     }
 
-    setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
       // Force the account selection dialog every time — prevents auto-signing into cached/guest accounts
       provider.setCustomParameters({ prompt: 'select_account' });
+      // Call popup synchronously in the same thread as the user click to prevent pop-up blocker
       const credentials = await signInWithPopup(firebaseAuth, provider);
+      
+      setLoading(true);
       const firebaseToken = await credentials.user.getIdToken();
       
       const res = await axios.post(`${API_BASE}/auth/verify`, {
@@ -232,6 +236,7 @@ export const AuthProvider = ({ children }) => {
       value={{
         user,
         loading,
+        initializing,
         loginWithEmail,
         registerWithEmail,
         loginWithGoogle,
