@@ -76,7 +76,7 @@ export default function AuthContainer() {
   };
 
   const setupRecaptcha = () => {
-    // Clear previous verifier if it exists to attach to new DOM element
+    // Clear previous verifier if it exists
     if (window.recaptchaVerifier) {
       try {
         window.recaptchaVerifier.clear();
@@ -86,13 +86,20 @@ export default function AuthContainer() {
       window.recaptchaVerifier = null;
     }
 
-    const container = document.getElementById("recaptcha-container");
-    if (!container) {
-      console.error("recaptcha-container element not found in DOM");
-      return null;
+    // Clean up any existing dynamic recaptcha container
+    const existing = document.getElementById("recaptcha-container-dynamic");
+    if (existing) {
+      existing.remove();
     }
+
+    // Create a new container dynamically and append to document.body
+    // This isolates it from React's virtual DOM re-render/unmount cycles
+    const container = document.createElement("div");
+    container.id = "recaptcha-container-dynamic";
+    document.body.appendChild(container);
+
     try {
-      window.recaptchaVerifier = new RecaptchaVerifier(firebaseAuth, "recaptcha-container", {
+      window.recaptchaVerifier = new RecaptchaVerifier(firebaseAuth, container, {
         size: "invisible",
         callback: (response) => {
           // reCAPTCHA solved
@@ -299,7 +306,6 @@ export default function AuthContainer() {
             </button>
           </div>
         </div>
-        <div id="recaptcha-container"></div>
       </div>
     );
   }
@@ -386,7 +392,6 @@ export default function AuthContainer() {
             </button>
           </div>
         </div>
-        <div id="recaptcha-container"></div>
       </div>
     );
   }
@@ -706,7 +711,6 @@ export default function AuthContainer() {
         </div>
 
       </div>
-      <div id="recaptcha-container"></div>
     </div>
   );
 }
