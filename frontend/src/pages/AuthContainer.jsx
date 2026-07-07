@@ -462,17 +462,6 @@ export default function AuthContainer() {
               />
             </div>
 
-            <div>
-              <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Phone Number (Optional)</label>
-              <input
-                type="tel"
-                className="w-full bg-slate-950/40 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 transition-all focus:ring-1 focus:ring-brand-500/30"
-                placeholder="+15555555555 (optional)"
-                value={registerPhone}
-                onChange={(e) => setRegisterPhone(e.target.value)}
-              />
-            </div>
-
             <button
               type="submit"
               disabled={loading || smsLoading}

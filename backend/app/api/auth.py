@@ -103,9 +103,9 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
     user.otp_code = otp
     user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     
-    # Auto-verify in test or dev bypass environment or if registered via Firebase (phone/social)
+    # Auto-verify only in testing environment or if registered via Firebase OAuth
     import os
-    if os.getenv("TESTING") == "True" or (settings.DEV_BYPASS_FIREBASE and os.getenv("TESTING") != "False") or payload.firebase_uid:
+    if os.getenv("TESTING") == "True" or payload.firebase_uid:
         user.is_verified = True
         user.otp_code = None
         user.otp_expires_at = None
