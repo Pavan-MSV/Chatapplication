@@ -126,23 +126,24 @@ export default function AuthContainer() {
       setError("Password must be at least 6 characters.");
       return;
     }
-    if (!registerPhone || registerPhone.trim() === "") {
-      setError("Phone number is required.");
-      return;
-    }
 
     setSmsLoading(true);
     try {
-      let appVerifier = null;
-      if (firebaseAuth) {
-        appVerifier = setupRecaptcha();
+      const res = await registerWithEmail(
+        registerUsername,
+        registerEmail,
+        registerPassword,
+        registerPhone ? registerPhone.trim() : null,
+        null
+      );
+      if (res && res.requires_verification) {
+        setOtpEmail(registerEmail);
+        setOtpMessage(res.message || "Verification code sent to your email.");
+        setOtpError("");
+        setShowOtp(true);
       }
-      const result = await loginWithPhone(registerPhone.trim(), appVerifier);
-      setConfirmationResult(result);
-      setPhoneLoginMode(false);
-      setShowSmsVerification(true);
     } catch (err) {
-      setError(err.message || "Failed to send SMS verification code. Please check your phone format (e.g. +1234567890).");
+      setError(err.message || "Failed to register account.");
     } finally {
       setSmsLoading(false);
     }
@@ -462,12 +463,11 @@ export default function AuthContainer() {
             </div>
 
             <div>
-              <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Phone Number</label>
+              <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Phone Number (Optional)</label>
               <input
                 type="tel"
-                required
                 className="w-full bg-slate-950/40 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 transition-all focus:ring-1 focus:ring-brand-500/30"
-                placeholder="+15555555555"
+                placeholder="+15555555555 (optional)"
                 value={registerPhone}
                 onChange={(e) => setRegisterPhone(e.target.value)}
               />
@@ -483,7 +483,7 @@ export default function AuthContainer() {
               ) : (
                 <>
                   <UserPlus className="w-4 h-4" />
-                  <span>Register & Verify Phone</span>
+                  <span>Register Account</span>
                 </>
               )}
             </button>
